@@ -1,0 +1,6 @@
+{
+  "name": "Échecs Antiques 3D",
+  "description": "Jeu d'échecs gréco-romain en 3D temps réel avec sculptures en marbre de Carrare et bronze patiné, plateau en mosaïque romaine, physique d'éclats et IA tactique.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

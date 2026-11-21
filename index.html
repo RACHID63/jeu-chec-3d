@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Échecs Antiques 3D</title>
+    <meta
+      name="description"
+      content="Jeu d'échecs gréco-romain en 3D temps réel avec sculptures en marbre de Carrare et bronze patiné, plateau en mosaïque romaine, physique d'éclats et IA tactique."
+    />
+    <meta property="og:title" content="Échecs Antiques 3D" />
+    <meta
+      property="og:description"
+      content="Jeu d'échecs gréco-romain en 3D temps réel avec sculptures en marbre de Carrare et bronze patiné, plateau en mosaïque romaine, physique d'éclats et IA tactique."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="viewport-root">
+      <!-- Scène WebGL plein écran -->
+      <div id="canvas-container" aria-label="Plateau d'échecs antiques en 3D"></div>
+
+      <!-- Fallback WebGL indisponible -->
+      <div id="webgl-fallback" class="webgl-fallback hidden" role="alert">
+        <div class="modal-card">
+          <h2 class="modal-title">Rendu 3D indisponible</h2>
+          <p class="modal-desc">
+            Votre navigateur n'a pas pu initialiser le contexte WebGL nécessaire au rendu du musée 3D.
+          </p>
+        </div>
+      </div>
+
+      <!-- HUD Superposé -->
+      <div class="hud-layer">
+        <!-- Mise en valeur d'un élément UI pendant le tutoriel interactif -->
+        <div id="tutorial-spotlight" class="tutorial-spotlight hidden" aria-hidden="true"></div>
+
+        <!-- Bandeau supérieur -->
+        <header class="hud-top">
+          <div class="hud-brand">
+            <svg class="brand-emblem" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M3 9.5L12 4L21 9.5M5 10.5V18M9.5 10.5V18M14.5 10.5V18M19 10.5V18M3.5 19.5H20.5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <div class="brand-text">
+              <h1 class="brand-title">Échecs Antiques</h1>
+              <p id="hud-mode-subtitle" class="brand-subtitle">IA : Centurion (Niveau 2)</p>
+            </div>
+          </div>
+
+          <!-- Barre de statut en temps réel -->
+          <div class="hud-status-group" aria-live="polite">
+            <div id="status-turn" class="status-turn">
+              <span id="turn-swatch" class="material-swatch swatch-white" aria-hidden="true"></span>
+              <span id="turn-label">Tour : Blancs (Marbre)</span>
+            </div>
+
+            <div id="ai-thinking" class="status-ai hidden">
+              <span class="imperial-spinner" aria-hidden="true"></span>
+              <span id="ai-thinking-text">L'Empereur réfléchit...</span>
+            </div>
+
+            <div id="check-alert" class="status-check hidden">
+              <svg class="alert-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path
+                  fill-rule="evenodd"
+                  d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+              <span>Échec au Roi !</span>
+            </div>
+          </div>
+
+          <!-- Choix rapide d'adversaire & icônes d'action -->
+          <div class="hud-top-actions">
+            <div class="opponent-switch" role="group" aria-label="Choix de l'adversaire">
+              <button
+                id="btn-quick-ai"
+                type="button"
+                class="opponent-btn is-active"
+                aria-pressed="true"
+                title="Jouer contre l'ordinateur"
+              >
+                Ordinateur
+              </button>
+              <button
+                id="btn-quick-pvp"
+                type="button"
+                class="opponent-btn"
+                aria-pressed="false"
+                title="Jouer à deux contre quelqu'un sur le même écran"
+              >
+                2 Joueurs
+              </button>
+            </div>
+            <button
+              id="btn-auth-top"
+              type="button"
+              class="auth-top-btn"
+              title="Connexion / Inscription joueur"
+              aria-label="Ouvrir le menu de connexion et d'inscription"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.6" />
+                <path
+                  d="M4.5 20C4.5 16.4 7.8 14 12 14C16.2 14 19.5 16.4 19.5 20"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span id="auth-top-label">Connexion</span>
+            </button>
+            <button
+              id="btn-plate-top"
+              type="button"
+              class="icon-btn"
+              title="Planche de Référence Antique"
+              aria-label="Ouvrir la planche des pièces"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 3L14.2 8.8L20 11L14.2 13.2L12 19L9.8 13.2L4 11L9.8 8.8L12 3Z"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              id="btn-newgame-top"
+              type="button"
+              class="icon-btn"
+              title="Nouvelle partie / Configurer l'adversaire"
+              aria-label="Nouvelle partie"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M4 12A8 8 0 0117.65 6.35L20 8.5M20 4V8.5H15.5M20 12A8 8 0 016.35 17.65L4 15.5"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <!-- Panneau flottant Mode Apprentissage & Conseils -->
+        <aside id="learning-panel" class="learning-panel hidden" aria-label="Conseils d'apprentissage">
+          <div id="learning-panel-header" class="learning-header" title="Glisser pour déplacer le panneau">
+            <div class="learning-title-row">
+              <svg class="learning-drag-grip" viewBox="0 0 12 18" fill="currentColor" aria-hidden="true">
+                <circle cx="3" cy="3" r="1.4" />
+                <circle cx="9" cy="3" r="1.4" />
+                <circle cx="3" cy="9" r="1.4" />
+                <circle cx="9" cy="9" r="1.4" />
+                <circle cx="3" cy="15" r="1.4" />
+                <circle cx="9" cy="15" r="1.4" />
+              </svg>
+              <svg class="learning-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 3L2 8L12 13L22 8L12 3ZM6 10.5V16C6 18.2 8.7 20 12 20C15.3 20 18 18.2 18 16V10.5"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <div>
+                <h2 class="learning-title">Mode Apprentissage</h2>
+                <p id="learning-meta" class="learning-meta">Ouverture · Position équilibrée</p>
+              </div>
+            </div>
+            <button
+              id="btn-learning-close"
+              type="button"
+              class="learning-close"
+              title="Masquer les conseils"
+              aria-label="Masquer le panneau de conseils"
+            >
+              ×
+            </button>
+          </div>
+
+          <div class="learning-body">
+            <!-- Guide pas-à-pas du Tutoriel Interactif -->
+            <div id="learning-tutorial-box" class="learning-section learning-tutorial-box hidden">
+              <div class="tutorial-head">
+                <span id="tutorial-step-badge" class="tutorial-badge">Étape 1 / 6</span>
+                <button id="btn-tutorial-exit" type="button" class="tutorial-skip-btn">
+                  Quitter
+                </button>
+              </div>
+              <h3 id="tutorial-step-title" class="tutorial-step-title">Tableau de bord</h3>
+              <p id="tutorial-step-desc" class="learning-text"></p>
+              <p id="tutorial-step-hint" class="tutorial-step-hint hidden"></p>
+              <div id="tutorial-step-actions" class="tutorial-step-actions">
+                <button id="btn-tutorial-next" type="button" class="btn-tutorial-next">
+                  Suivant
+                </button>
+              </div>
+            </div>
+
+            <!-- Verdict sur le dernier coup joué -->
+            <div id="learning-feedback" class="learning-section hidden">
+              <span id="learning-feedback-title" class="learning-section-title">Dernier coup</span>
+              <p id="learning-feedback-text" class="learning-text"></p>
+            </div>
+
+            <!-- Alerte pièces menacées -->
+            <div id="learning-threats" class="learning-section learning-threat-box hidden">
+              <span class="learning-section-title">Pièce en danger</span>
+              <p id="learning-threats-text" class="learning-text"></p>
+            </div>
+
+            <!-- Recommandation du stratège -->
+            <div class="learning-section">
+              <div class="learning-coach-head">
+                <span class="learning-section-title">Conseil du stratège</span>
+                <span id="learning-eval-score" class="learning-eval">0.0</span>
+              </div>
+              <p id="learning-recommended-move" class="learning-recommended-move">
+                Cliquez sur « Montrer un conseil » pour obtenir une recommandation.
+              </p>
+              <p id="learning-reason" class="learning-text">
+                Observez le développement de vos pièces vers le centre et la protection de votre Empereur.
+              </p>
+            </div>
+
+            <!-- Rappel contextuel sur la pièce sélectionnée -->
+            <div id="learning-piece-tip" class="learning-section hidden">
+              <span class="learning-section-title">Règle de la pièce sélectionnée</span>
+              <p id="learning-piece-tip-text" class="learning-text"></p>
+            </div>
+          </div>
+
+          <div class="learning-actions">
+            <button id="btn-show-hint" type="button" class="btn-hint-primary">
+              Montrer le conseil 3D
+            </button>
+            <button id="btn-hide-hint" type="button" class="btn-hint-secondary hidden">
+              Effacer flèche
+            </button>
+          </div>
+        </aside>
+
+        <!-- Bandeau de retour de commande vocale -->
+        <div id="voice-status-bar" class="voice-status-bar hidden" aria-live="polite">
+          <svg class="voice-status-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.7" />
+            <path
+              d="M5.5 11.5C5.5 15.1 8.4 18 12 18C15.6 18 18.5 15.1 18.5 11.5M12 18V21M9 21H15"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span id="voice-status-text" class="voice-status-text">
+            Micro actif — Dites par ex. « C1 vers C3 »
+          </span>
+        </div>
+
+        <!-- Barre inférieure -->
+        <footer class="hud-bottom">
+          <div class="captured-strip" aria-label="Pertes capturées">
+            <div class="captured-side">
+              <span class="captured-label">Marbre capturé :</span>
+              <span id="captured-white" class="captured-list">Aucune perte</span>
+            </div>
+            <span class="captured-sep" aria-hidden="true">/</span>
+            <div class="captured-side">
+              <span class="captured-label">Bronze capturé :</span>
+              <span id="captured-black" class="captured-list">Aucune perte</span>
+            </div>
+          </div>
+
+          <div class="hud-bottom-actions">
+            <button
+              id="btn-camera-style"
+              type="button"
+              class="action-btn action-btn-vision"
+              data-vision="iso"
+              title="Changer la vision du jeu : 3D, Cinématique ou 2D"
+              aria-label="Vision du jeu : 3D"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 3L20 7.5V16.5L12 21L4 16.5V7.5L12 3Z"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                />
+                <path d="M12 12L20 7.5M12 12V21M12 12L4 7.5" stroke="currentColor" stroke-width="1.4" />
+              </svg>
+              <span id="camera-style-label">Vision : 3D</span>
+            </button>
+
+            <button id="btn-voice" type="button" class="action-btn voice-btn" aria-pressed="false" title="Activer/désactiver la commande vocale (ex. C1 vers C3)">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.7" />
+                <path
+                  d="M5.5 11.5C5.5 15.1 8.4 18 12 18C15.6 18 18.5 15.1 18.5 11.5M12 18V21M9 21H15"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span>Voix</span>
+            </button>
+
+            <button id="btn-learning" type="button" class="action-btn" aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 3L2 8L12 13L22 8L12 3ZM6 10.5V16C6 18.2 8.7 20 12 20C15.3 20 18 18.2 18 16V10.5"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Apprentissage</span>
+            </button>
+
+            <button id="btn-undo" type="button" class="action-btn" disabled>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M9 14L4 9L9 4M4 9H14.5C17.8 9 20 11.2 20 14.5C20 17.8 17.8 20 14.5 20H11"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Annuler</span>
+            </button>
+
+            <button id="btn-history" type="button" class="action-btn">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M8 6H20M8 12H20M8 18H20M4 6H4.01M4 12H4.01M4 18H4.01"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span>Coups</span>
+            </button>
+
+            <button id="btn-plate-bottom" type="button" class="action-btn action-btn-gold">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M4 19.5V5.5C4 4.4 4.9 3.5 6 3.5H19V19.5H6C4.9 19.5 4 18.6 4 17.5M8 8H15M8 12H15"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span>Planche</span>
+            </button>
+
+            <button
+              id="btn-fullscreen"
+              type="button"
+              class="action-btn"
+              aria-pressed="false"
+              title="Basculer en mode plein écran"
+            >
+              <svg id="fullscreen-icon-enter" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M4 9V4H9M15 4H20V9M20 15V20H15M9 20H4V15"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <svg id="fullscreen-icon-exit" class="hidden" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M9 4V9H4M20 9H15V4M15 20V15H20M4 15H9V20"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span id="fullscreen-label">Plein écran</span>
+            </button>
+          </div>
+        </footer>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 1 : NOUVELLE CAMPAGNE                                       -->
+      <!-- ================================================================== -->
+      <div id="modal-new-game" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-new-game">
+        <div class="modal-card modal-campaign">
+          <div class="modal-header">
+            <div>
+              <p class="modal-kicker">Choix de l'adversaire</p>
+              <h2 id="title-new-game" class="modal-title">Nouvelle Partie</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal="modal-new-game" aria-label="Fermer">×</button>
+          </div>
+
+          <div class="modal-body">
+            <div class="campaign-auth-banner">
+              <span id="campaign-auth-status" class="campaign-auth-status">
+                Mode invité · Identifiant requis uniquement pour sauvegarder vos scores
+              </span>
+              <button id="btn-campaign-auth" type="button" class="btn-secondary btn-compact">
+                Se connecter / S'inscrire
+              </button>
+            </div>
+
+            <div class="form-section">
+              <span class="form-label">Contre qui souhaitez-vous jouer ?</span>
+              <div class="segmented-grid three-cols" role="radiogroup" aria-label="Mode de jeu">
+                <button type="button" class="choice-card is-selected" data-mode="ai">
+                  <strong>Contre l'ordinateur</strong>
+                  <span>Affronter l'IA antique à 3 niveaux</span>
+                </button>
+                <button type="button" class="choice-card" data-mode="learning">
+                  <strong>Apprentissage (IA)</strong>
+                  <span>Contre l'ordinateur avec conseils et flèches 3D</span>
+                </button>
+                <button type="button" class="choice-card" data-mode="pvp">
+                  <strong>Contre quelqu'un</strong>
+                  <span>2 Joueurs en duel local sur le même écran</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="ai-options-block" class="form-section">
+              <span class="form-label">Niveau de l'Intelligence Artificielle</span>
+              <div class="segmented-grid three-cols" role="radiogroup" aria-label="Niveau IA">
+                <button type="button" class="choice-card" data-level="1">
+                  <strong>Initié</strong>
+                  <span>Niveau 1 · Tactique instinctive et captures directes</span>
+                </button>
+                <button type="button" class="choice-card is-selected" data-level="2">
+                  <strong>Centurion</strong>
+                  <span>Niveau 2 · Calcul 3 coups et jeu positionnel</span>
+                </button>
+                <button type="button" class="choice-card" data-level="3">
+                  <strong>Empereur</strong>
+                  <span>Niveau 3 · Calcul 4 coups, centre et sécurité royale</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="side-options-block" class="form-section">
+              <span class="form-label">Camp du joueur</span>
+              <div class="segmented-grid two-cols" role="radiogroup" aria-label="Camp du joueur">
+                <button type="button" class="choice-card is-selected" data-side="w">
+                  <span class="choice-swatch-row">
+                    <span class="material-swatch swatch-white" aria-hidden="true"></span>
+                    <strong>Blancs — Marbre de Carrare</strong>
+                  </span>
+                  <span>Vous ouvrez la bataille en premier</span>
+                </button>
+                <button type="button" class="choice-card" data-side="b">
+                  <span class="choice-swatch-row">
+                    <span class="material-swatch swatch-black" aria-hidden="true"></span>
+                    <strong>Noirs — Bronze Patiné</strong>
+                  </span>
+                  <span>Caméra inversée · L'IA joue le premier coup</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer modal-footer-split">
+            <button id="btn-start-tutorial" type="button" class="btn-tutorial">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 3L2 8L12 13L22 8L12 3ZM6 10.5V16C6 18.2 8.7 20 12 20C15.3 20 18 18.2 18 16V10.5"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Tutoriel Interactif</span>
+            </button>
+            <div class="modal-footer-actions">
+              <button type="button" class="btn-secondary" data-close-modal="modal-new-game">Annuler</button>
+              <button id="btn-start-campaign" type="button" class="btn-primary">Engager la bataille</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 2 : PLANCHE DE RÉFÉRENCE ANTIQUE                            -->
+      <!-- ================================================================== -->
+      <div id="modal-reference" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-reference">
+        <div class="modal-card modal-reference-card">
+          <div class="modal-header">
+            <div>
+              <p class="modal-kicker">Collection du Musée</p>
+              <h2 id="title-reference" class="modal-title">Planche de Référence Antique</h2>
+            </div>
+            <div class="reference-header-controls">
+              <div class="material-toggle" role="group" aria-label="Matériau de la planche">
+                <button id="ref-mat-w" type="button" class="toggle-tab is-active" data-ref-color="w">
+                  Marbre de Carrare
+                </button>
+                <button id="ref-mat-b" type="button" class="toggle-tab" data-ref-color="b">
+                  Bronze Patiné
+                </button>
+              </div>
+              <button type="button" class="modal-close" data-close-modal="modal-reference" aria-label="Fermer">×</button>
+            </div>
+          </div>
+
+          <div class="modal-body">
+            <div class="reference-stage-wrap">
+              <canvas id="reference-canvas" width="960" height="320"></canvas>
+            </div>
+
+            <div id="reference-grid" class="reference-grid"></div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn-primary" data-close-modal="modal-reference">Retour au plateau</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 3 : CHRONIQUES DE LA BATAILLE (HISTORIQUE)                  -->
+      <!-- ================================================================== -->
+      <div id="modal-history" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-history">
+        <div class="modal-card modal-history-card">
+          <div class="modal-header">
+            <div>
+              <p class="modal-kicker">Notation algébrique</p>
+              <h2 id="title-history" class="modal-title">Chroniques de la Bataille</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal="modal-history" aria-label="Fermer">×</button>
+          </div>
+
+          <div class="modal-body">
+            <div id="history-empty" class="history-empty">
+              Aucun mouvement n'a encore été consigné dans les annales.
+            </div>
+            <div id="history-table-wrap" class="history-table-wrap hidden">
+              <table class="history-table">
+                <thead>
+                  <tr>
+                    <th>Tour</th>
+                    <th>Blancs (Marbre)</th>
+                    <th>Noirs (Bronze)</th>
+                  </tr>
+                </thead>
+                <tbody id="history-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn-primary" data-close-modal="modal-history">Fermer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 4A : PROMOTION IMPÉRIALE                                    -->
+      <!-- ================================================================== -->
+      <div id="modal-promotion" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-promotion">
+        <div class="modal-card modal-promo-card">
+          <div class="modal-header">
+            <div>
+              <p class="modal-kicker">Rangée suprême atteinte</p>
+              <h2 id="title-promotion" class="modal-title">Promotion Impériale</h2>
+            </div>
+          </div>
+          <div class="modal-body">
+            <p class="modal-desc">
+              Votre légionnaire a traversé le champ de bataille. Choisissez la sculpture qui le remplacera :
+            </p>
+            <div class="promo-grid">
+              <button type="button" class="promo-choice" data-promo="q">
+                <span class="promo-name">Dame</span>
+                <span class="promo-sub">Déesse Drapée</span>
+              </button>
+              <button type="button" class="promo-choice" data-promo="r">
+                <span class="promo-name">Tour</span>
+                <span class="promo-sub">Colonne Corinthienne</span>
+              </button>
+              <button type="button" class="promo-choice" data-promo="b">
+                <span class="promo-name">Fou</span>
+                <span class="promo-sub">Philosophe Antique</span>
+              </button>
+              <button type="button" class="promo-choice" data-promo="n">
+                <span class="promo-name">Cavalier</span>
+                <span class="promo-sub">Cheval Antique</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 4B : FIN DE PARTIE                                          -->
+      <!-- ================================================================== -->
+      <div id="modal-gameover" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-gameover">
+        <div class="modal-card modal-gameover-card">
+          <div class="modal-header">
+            <div>
+              <p id="gameover-kicker" class="modal-kicker">Issue de la bataille</p>
+              <h2 id="title-gameover" class="modal-title">Victoire Impériale</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal="modal-gameover" aria-label="Fermer">×</button>
+          </div>
+          <div class="modal-body">
+            <p id="gameover-desc" class="modal-desc">Échec et mat.</p>
+            <div class="gameover-stats">
+              <div class="stat-item">
+                <span class="stat-label">Coups joués</span>
+                <strong id="gameover-moves" class="stat-value">0</strong>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Pertes Marbre</span>
+                <strong id="gameover-white-lost" class="stat-value">0</strong>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Pertes Bronze</span>
+                <strong id="gameover-black-lost" class="stat-value">0</strong>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" data-close-modal="modal-gameover">Examiner l'échiquier</button>
+            <button id="btn-gameover-new" type="button" class="btn-primary">Engager une nouvelle bataille</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 5 : MENU DE CONNEXION & INSCRIPTION (IDENTIFIANT)           -->
+      <!-- ================================================================== -->
+      <div id="modal-auth" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-auth">
+        <div class="modal-card modal-auth-card">
+          <div class="modal-header">
+            <div>
+              <p class="modal-kicker">Espace Joueur</p>
+              <h2 id="title-auth" class="modal-title">Connexion &amp; Inscription</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal="modal-auth" aria-label="Fermer">×</button>
+          </div>
+
+          <!-- Formulaires Connexion / Inscription -->
+          <div id="auth-forms-view">
+            <div class="modal-body">
+              <div class="auth-tabs" role="tablist" aria-label="Connexion ou Inscription">
+                <button
+                  id="tab-auth-login"
+                  type="button"
+                  class="auth-tab is-active"
+                  role="tab"
+                  aria-selected="true"
+                >
+                  Connexion
+                </button>
+                <button
+                  id="tab-auth-register"
+                  type="button"
+                  class="auth-tab"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  Inscription
+                </button>
+              </div>
+
+              <form id="form-auth" class="auth-form" novalidate>
+                <div class="auth-field">
+                  <label class="auth-label" for="auth-email">Adresse e-mail</label>
+                  <input
+                    id="auth-email"
+                    name="email"
+                    type="email"
+                    class="auth-input"
+                    placeholder="nom@exemple.com"
+                    autocomplete="email"
+                    maxlength="160"
+                    required
+                  />
+                </div>
+
+                <div class="auth-field">
+                  <label class="auth-label" for="auth-password">Mot de passe</label>
+                  <input
+                    id="auth-password"
+                    name="password"
+                    type="password"
+                    class="auth-input"
+                    placeholder="Minimum 6 caractères"
+                    autocomplete="current-password"
+                    minlength="6"
+                    maxlength="128"
+                    required
+                  />
+                  <div id="auth-forgot-row" class="auth-link-row">
+                    <button id="btn-forgot-password" type="button" class="auth-link-btn">
+                      Mot de passe oublié ?
+                    </button>
+                  </div>
+                </div>
+
+                <div id="auth-confirm-group" class="auth-field hidden">
+                  <label class="auth-label" for="auth-password-confirm">Confirmer le mot de passe</label>
+                  <input
+                    id="auth-password-confirm"
+                    name="passwordConfirm"
+                    type="password"
+                    class="auth-input"
+                    placeholder="Répétez le mot de passe"
+                    autocomplete="new-password"
+                    minlength="6"
+                    maxlength="128"
+                  />
+                </div>
+
+                <p id="auth-feedback" class="auth-feedback hidden" role="alert"></p>
+
+                <button id="btn-auth-submit" type="submit" class="btn-primary auth-submit-btn">
+                  Se connecter
+                </button>
+              </form>
+            </div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn-secondary" data-close-modal="modal-auth">
+                Continuer sans compte
+              </button>
+            </div>
+          </div>
+
+          <!-- Mot de passe oublié (envoi d'e-mail) -->
+          <div id="auth-forgot-view" class="hidden">
+            <div class="modal-body">
+              <p class="auth-subview-desc">
+                Saisissez votre adresse e-mail d'inscription. Vous recevrez un e-mail contenant un lien valable 15 minutes pour modifier votre mot de passe.
+              </p>
+
+              <form id="form-forgot-password" class="auth-form" novalidate>
+                <div class="auth-field">
+                  <label class="auth-label" for="forgot-email">Adresse e-mail</label>
+                  <input
+                    id="forgot-email"
+                    name="email"
+                    type="email"
+                    class="auth-input"
+                    placeholder="nom@exemple.com"
+                    autocomplete="email"
+                    maxlength="160"
+                    required
+                  />
+                </div>
+
+                <p id="forgot-smtp-note" class="auth-smtp-note hidden">
+                  Remarque VPS : configurez les variables <code>SMTP_HOST</code>, <code>SMTP_USER</code> et <code>SMTP_PASS</code> dans votre fichier <code>.env</code> pour activer l'envoi d'e-mails.
+                </p>
+
+                <p id="forgot-feedback" class="auth-feedback hidden" role="alert"></p>
+
+                <button id="btn-forgot-submit" type="submit" class="btn-primary auth-submit-btn">
+                  Envoyer le lien par e-mail
+                </button>
+              </form>
+            </div>
+
+            <div class="modal-footer">
+              <button id="btn-forgot-back" type="button" class="btn-secondary">
+                Retour à la connexion
+              </button>
+            </div>
+          </div>
+
+          <!-- Modification du mot de passe (après clic sur le lien reçu par e-mail) -->
+          <div id="auth-reset-view" class="hidden">
+            <div class="modal-body">
+              <p class="auth-subview-desc">
+                Choisissez un nouveau mot de passe pour votre compte.
+              </p>
+
+              <form id="form-reset-password" class="auth-form" novalidate>
+                <div class="auth-field">
+                  <label class="auth-label" for="reset-password">Nouveau mot de passe</label>
+                  <input
+                    id="reset-password"
+                    name="newPassword"
+                    type="password"
+                    class="auth-input"
+                    placeholder="Minimum 6 caractères"
+                    autocomplete="new-password"
+                    minlength="6"
+                    maxlength="128"
+                    required
+                  />
+                </div>
+
+                <div class="auth-field">
+                  <label class="auth-label" for="reset-password-confirm">Confirmer le nouveau mot de passe</label>
+                  <input
+                    id="reset-password-confirm"
+                    name="newPasswordConfirm"
+                    type="password"
+                    class="auth-input"
+                    placeholder="Répétez le nouveau mot de passe"
+                    autocomplete="new-password"
+                    minlength="6"
+                    maxlength="128"
+                    required
+                  />
+                </div>
+
+                <p id="reset-feedback" class="auth-feedback hidden" role="alert"></p>
+
+                <button id="btn-reset-submit" type="submit" class="btn-primary auth-submit-btn">
+                  Modifier mon mot de passe
+                </button>
+              </form>
+            </div>
+
+            <div class="modal-footer">
+              <button id="btn-reset-back" type="button" class="btn-secondary">
+                Retour à la connexion
+              </button>
+            </div>
+          </div>
+
+          <!-- Profil connecté -->
+          <div id="auth-profile-view" class="hidden">
+            <div class="modal-body">
+              <div class="profile-banner">
+                <div>
+                  <span class="profile-label">Adresse e-mail active</span>
+                  <strong id="profile-email" class="profile-username">joueur@exemple.com</strong>
+                </div>
+                <span id="profile-created" class="profile-created">Membre inscrit</span>
+              </div>
+
+              <div class="gameover-stats">
+                <div class="stat-item">
+                  <span class="stat-label">Victoires (IA)</span>
+                  <strong id="profile-wins" class="stat-value">0</strong>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Nulles</span>
+                  <strong id="profile-draws" class="stat-value">0</strong>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Défaites (IA)</span>
+                  <strong id="profile-losses" class="stat-value">0</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-footer">
+              <button id="btn-auth-logout" type="button" class="btn-secondary">Se déconnecter</button>
+              <button type="button" class="btn-primary" data-close-modal="modal-auth">Retour au jeu</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
