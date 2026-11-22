@@ -137,6 +137,52 @@ export class ChessEngine {
     return this.moveHistory.pop();
   }
 
+  exportMoves() {
+    return this.moveHistory.map((m) => {
+      const entry = {
+        fromRow: m.fromRow,
+        fromCol: m.fromCol,
+        toRow: m.toRow,
+        toCol: m.toCol,
+      };
+      if (m.promotion) entry.promotion = m.promotion;
+      return entry;
+    });
+  }
+
+  loadFromMoves(moves) {
+    if (!Array.isArray(moves)) return false;
+    const probe = new ChessEngine();
+    for (const m of moves) {
+      if (!m || typeof m !== 'object') return false;
+      const res = probe.makeMove({
+        fromRow: m.fromRow,
+        fromCol: m.fromCol,
+        toRow: m.toRow,
+        toCol: m.toCol,
+        promotion: m.promotion || undefined,
+      });
+      if (!res) return false;
+    }
+
+    this.board = probe.board;
+    this.turn = probe.turn;
+    this.castlingRights = probe.castlingRights;
+    this.enPassantTarget = probe.enPassantTarget;
+    this.halfMoveClock = probe.halfMoveClock;
+    this.fullMoveNumber = probe.fullMoveNumber;
+    this.moveHistory = probe.moveHistory;
+    this.capturedByWhite = probe.capturedByWhite;
+    this.capturedByBlack = probe.capturedByBlack;
+    this.lastMove = probe.lastMove;
+    this.status = probe.status;
+    this.winner = probe.winner;
+    this.drawReason = probe.drawReason;
+    this._snapshots = probe._snapshots;
+    this._positionCounts = probe._positionCounts;
+    return true;
+  }
+
   _getPositionKey() {
     let key = '';
     for (let r = 0; r < 8; r++) {

@@ -126,6 +126,24 @@
               <span id="auth-top-label">Connexion</span>
             </button>
             <button
+              id="btn-help-top"
+              type="button"
+              class="auth-top-btn"
+              title="Aide débutant : règles et déplacements des pièces"
+              aria-label="Ouvrir le guide du débutant"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+                <path
+                  d="M9.6 9.4A2.5 2.5 0 0114.4 10.2C14.4 11.7 12 12.1 12 13.7M12 16.9H12.01"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span>Aide</span>
+            </button>
+            <button
               id="btn-plate-top"
               type="button"
               class="icon-btn"
@@ -246,7 +264,10 @@
             <!-- Rappel contextuel sur la pièce sélectionnée -->
             <div id="learning-piece-tip" class="learning-section hidden">
               <span class="learning-section-title">Règle de la pièce sélectionnée</span>
-              <p id="learning-piece-tip-text" class="learning-text"></p>
+              <div class="learning-piece-tip-row">
+                <div id="learning-piece-diagram" class="learning-piece-diagram" aria-hidden="true"></div>
+                <p id="learning-piece-tip-text" class="learning-text"></p>
+              </div>
             </div>
           </div>
 
@@ -256,6 +277,9 @@
             </button>
             <button id="btn-hide-hint" type="button" class="btn-hint-secondary hidden">
               Effacer flèche
+            </button>
+            <button id="btn-learning-help" type="button" class="btn-hint-secondary" title="Ouvrir le rappel débutant avec schémas">
+              Aide
             </button>
           </div>
         </aside>
@@ -362,6 +386,29 @@
               <span>Coups</span>
             </button>
 
+            <button
+              id="btn-saves"
+              type="button"
+              class="action-btn"
+              title="Sauvegarder la partie en cours ou reprendre une partie"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M5 4H16.5L20 7.5V19C20 19.6 19.6 20 19 20H5C4.4 20 4 19.6 4 19V5C4 4.4 4.4 4 5 4Z"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M8 4V9H15V4M8 20V14H16V20"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Sauvegarder</span>
+            </button>
+
             <button id="btn-plate-bottom" type="button" class="action-btn action-btn-gold">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path
@@ -400,6 +447,34 @@
                 />
               </svg>
               <span id="fullscreen-label">Plein écran</span>
+            </button>
+
+            <button
+              id="btn-toggle-menus"
+              type="button"
+              class="action-btn"
+              aria-pressed="false"
+              title="Masquer les menus pour dégager le plateau"
+            >
+              <svg id="menus-icon-hide" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M3 3L21 21M10.6 10.7A3 3 0 0013.3 13.4M9.9 5.1A10.4 10.4 0 0112 4.9C16.8 4.9 20.4 8.6 21.5 12C21 13.5 20.1 14.9 19 16.1M6.6 6.6C4.7 8 3.3 9.9 2.5 12C3.6 15.4 7.2 19.1 12 19.1C13.6 19.1 15.1 18.7 16.4 18"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <svg id="menus-icon-show" class="hidden" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M2.5 12C3.6 8.6 7.2 4.9 12 4.9C16.8 4.9 20.4 8.6 21.5 12C20.4 15.4 16.8 19.1 12 19.1C7.2 19.1 3.6 15.4 2.5 12Z"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                />
+                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6" />
+              </svg>
+              <span id="toggle-menus-label">Masquer menus</span>
             </button>
           </div>
         </footer>
@@ -486,18 +561,23 @@
           </div>
 
           <div class="modal-footer modal-footer-split">
-            <button id="btn-start-tutorial" type="button" class="btn-tutorial">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M12 3L2 8L12 13L22 8L12 3ZM6 10.5V16C6 18.2 8.7 20 12 20C15.3 20 18 18.2 18 16V10.5"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-              <span>Tutoriel Interactif</span>
-            </button>
+            <div class="modal-footer-left">
+              <button id="btn-start-tutorial" type="button" class="btn-tutorial">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 3L2 8L12 13L22 8L12 3ZM6 10.5V16C6 18.2 8.7 20 12 20C15.3 20 18 18.2 18 16V10.5"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span>Tutoriel Interactif</span>
+              </button>
+              <button id="btn-open-saves-from-newgame" type="button" class="btn-secondary">
+                Parties sauvegardées
+              </button>
+            </div>
             <div class="modal-footer-actions">
               <button type="button" class="btn-secondary" data-close-modal="modal-new-game">Annuler</button>
               <button id="btn-start-campaign" type="button" class="btn-primary">Engager la bataille</button>
@@ -507,22 +587,34 @@
       </div>
 
       <!-- ================================================================== -->
-      <!-- MODALE 2 : PLANCHE DE RÉFÉRENCE ANTIQUE                            -->
+      <!-- MODALE 2 : AIDE DÉBUTANT & PLANCHE DE RÉFÉRENCE ANTIQUE           -->
       <!-- ================================================================== -->
       <div id="modal-reference" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-reference">
         <div class="modal-card modal-reference-card">
           <div class="modal-header">
             <div>
-              <p class="modal-kicker">Collection du Musée</p>
-              <h2 id="title-reference" class="modal-title">Planche de Référence Antique</h2>
+              <p id="reference-kicker" class="modal-kicker">Aide &amp; Collection du Musée</p>
+              <h2 id="title-reference" class="modal-title">Planche de Référence &amp; Aide Débutant</h2>
             </div>
             <div class="reference-header-controls">
-              <div class="material-toggle" role="group" aria-label="Matériau de la planche">
-                <button id="ref-mat-w" type="button" class="toggle-tab is-active" data-ref-color="w">
-                  Marbre de Carrare
+              <div class="material-toggle" role="tablist" aria-label="Section d'aide">
+                <button
+                  id="tab-ref-guide"
+                  type="button"
+                  class="toggle-tab is-active"
+                  role="tab"
+                  aria-selected="true"
+                >
+                  Rappel Débutant
                 </button>
-                <button id="ref-mat-b" type="button" class="toggle-tab" data-ref-color="b">
-                  Bronze Patiné
+                <button
+                  id="tab-ref-3d"
+                  type="button"
+                  class="toggle-tab"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  Planche 3D
                 </button>
               </div>
               <button type="button" class="modal-close" data-close-modal="modal-reference" aria-label="Fermer">×</button>
@@ -530,11 +622,48 @@
           </div>
 
           <div class="modal-body">
-            <div class="reference-stage-wrap">
-              <canvas id="reference-canvas" width="960" height="320"></canvas>
+            <!-- Onglet 1 : Rappel Débutant + Schémas de déplacement -->
+            <div id="ref-view-guide">
+              <div id="beginner-basics-grid" class="beginner-basics-grid"></div>
+
+              <div class="diagram-legend" aria-label="Légende des schémas">
+                <span class="legend-item">
+                  <span class="legend-dot legend-dot-move" aria-hidden="true"></span>
+                  Case de déplacement
+                </span>
+                <span class="legend-item">
+                  <span class="legend-dot legend-dot-dashed" aria-hidden="true"></span>
+                  1er coup (2 cases) / Saut en L
+                </span>
+                <span class="legend-item">
+                  <span class="legend-dot legend-dot-capture" aria-hidden="true"></span>
+                  Prise uniquement (Pion en diagonale)
+                </span>
+              </div>
+
+              <div id="beginner-pieces-grid" class="beginner-pieces-grid"></div>
             </div>
 
-            <div id="reference-grid" class="reference-grid"></div>
+            <!-- Onglet 2 : Planche 3D des Sculptures -->
+            <div id="ref-view-3d" class="hidden">
+              <div class="ref-3d-toolbar">
+                <span class="ref-3d-hint">Aperçu des 6 sculptures du plateau antique</span>
+                <div class="material-toggle" role="group" aria-label="Matériau de la planche">
+                  <button id="ref-mat-w" type="button" class="toggle-tab is-active" data-ref-color="w">
+                    Marbre de Carrare
+                  </button>
+                  <button id="ref-mat-b" type="button" class="toggle-tab" data-ref-color="b">
+                    Bronze Patiné
+                  </button>
+                </div>
+              </div>
+
+              <div class="reference-stage-wrap">
+                <canvas id="reference-canvas" width="960" height="320"></canvas>
+              </div>
+
+              <div id="reference-grid" class="reference-grid"></div>
+            </div>
           </div>
 
           <div class="modal-footer">
@@ -879,6 +1008,77 @@
               <button id="btn-auth-logout" type="button" class="btn-secondary">Se déconnecter</button>
               <button type="button" class="btn-primary" data-close-modal="modal-auth">Retour au jeu</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 6 : PARTIES SAUVEGARDÉES                                    -->
+      <!-- ================================================================== -->
+      <div id="modal-saves" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="title-saves">
+        <div class="modal-card modal-saves-card">
+          <div class="modal-header">
+            <div>
+              <p class="modal-kicker">Archives du Musée</p>
+              <h2 id="title-saves" class="modal-title">Parties Sauvegardées</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal="modal-saves" aria-label="Fermer">×</button>
+          </div>
+
+          <div class="modal-body">
+            <div class="saves-storage-banner">
+              <span id="saves-storage-status" class="campaign-auth-status">
+                Sauvegarde locale sur cet appareil · Connectez-vous pour enregistrer sur votre compte
+              </span>
+              <button id="btn-saves-auth" type="button" class="btn-secondary btn-compact">
+                Se connecter
+              </button>
+            </div>
+
+            <form id="form-save-game" class="save-form" novalidate>
+              <label class="auth-label" for="save-game-title">Sauvegarder la partie en cours</label>
+              <div class="save-form-row">
+                <input
+                  id="save-game-title"
+                  name="title"
+                  type="text"
+                  class="auth-input"
+                  placeholder="Nom de la partie (ex. Duel Centurion)"
+                  maxlength="80"
+                />
+                <button id="btn-save-current-game" type="submit" class="btn-primary save-submit-btn">
+                  Sauvegarder
+                </button>
+              </div>
+              <p id="saves-feedback" class="auth-feedback hidden" role="alert"></p>
+            </form>
+
+            <div id="autosave-slot-card" class="autosave-card hidden">
+              <div class="save-item-info">
+                <div class="save-item-head">
+                  <strong class="save-item-title">Dernière partie en cours (auto)</strong>
+                  <span id="autosave-badge" class="save-badge">Automatique</span>
+                </div>
+                <p id="autosave-meta" class="save-item-meta"></p>
+              </div>
+              <div class="save-item-actions">
+                <button id="btn-resume-autosave" type="button" class="btn-primary btn-compact">
+                  Reprendre
+                </button>
+              </div>
+            </div>
+
+            <div class="saves-list-section">
+              <span class="form-label">Mes parties enregistrées</span>
+              <div id="saved-games-empty" class="saves-empty">
+                Aucune partie sauvegardée pour le moment.
+              </div>
+              <div id="saved-games-list" class="saved-games-list"></div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn-secondary" data-close-modal="modal-saves">Fermer</button>
           </div>
         </div>
       </div>

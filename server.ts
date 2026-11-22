@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { createAuthRouter } from './auth-handler.js';
+import { createGamesRouter } from './games-handler.js';
 
 // ============================================================================
 // CONFIGURATION DU SERVEUR WEB (VPS & DÉVELOPPEMENT)
@@ -15,6 +16,10 @@ async function startServer(): Promise<void> {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+
+  // Routes des parties sauvegardées (historique de coups jusqu'à 128 Ko)
+  app.use('/api/games', express.json({ limit: '128kb' }), createGamesRouter());
+
   app.use(express.json({ limit: '16kb' }));
 
   app.get('/api/health', (_req, res) => {

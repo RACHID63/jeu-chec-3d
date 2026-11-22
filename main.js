@@ -28,6 +28,7 @@ import {
 import { ShatterFXManager } from './shatter-fx.js';
 import { VoiceChessController } from './voice-control.js';
 import { TUTORIAL_COMPLETED_STATE, TUTORIAL_STEPS } from './tutorial.js';
+import { BEGINNER_BASICS, PIECE_GUIDE_DATA, createPieceDiagramSvg } from './beginner-guide.js';
 
 // ============================================================================
 // 1. AUDIO PROCÉDURAL DE MUSÉE (WEB AUDIO API, ZÉRO FICHIER EXTERNE)
@@ -188,13 +189,13 @@ if (!renderer) {
 
 const scene = new THREE.Scene();
 scene.background = null; // Laisse apparaître le dégradé sombre du musée CSS (#0F0D0B -> #191512 -> #0A0907)
-scene.fog = new THREE.FogExp2(0x110e0b, 0.022);
+scene.fog = new THREE.FogExp2(0x110e0b, 0.013);
 
 const camera = new THREE.PerspectiveCamera(
   42,
   window.innerWidth / window.innerHeight,
   0.1,
-  100
+  120
 );
 
 if (renderer) {
@@ -661,7 +662,7 @@ if (controls) {
   controls.dampingFactor = 0.065;
   controls.enablePan = false;
   controls.minDistance = 5.5;
-  controls.maxDistance = 19.0;
+  controls.maxDistance = 42.0;
   controls.minPolarAngle = POLAR_MIN_FREE;
   controls.maxPolarAngle = POLAR_MAX_FREE;
   controls.target.set(0, 0.3, 0);
@@ -669,6 +670,7 @@ if (controls) {
 
 let activeCameraPreset = 'iso';
 let cameraTransition = null; // { targetPos: Vector3, targetLook: Vector3, allowTopPolar: boolean }
+let lastViewportAspect = window.innerWidth / Math.max(1, window.innerHeight);
 
 const CAMERA_STYLE_ORDER = ['iso', 'cinematic', 'top'];
 const CAMERA_STYLE_LABELS = {
@@ -679,27 +681,88 @@ const CAMERA_STYLE_LABELS = {
 const btnCameraStyle = document.getElementById('btn-camera-style');
 const cameraStyleLabelEl = document.getElementById('camera-style-label');
 
+// Emprise complète du jeu incluant le socle/cadre extérieur en marbre (±5.05) + marge visuelle
+const BOARD_FRAME_HALF_EXTENT = 5.3;
+const BOARD_FRAME_MAX_Y = 1.55;
+
+function fitCameraPoseToBoardFrame(basePos, look) {
+  const aspect = Math.max(0.35, window.innerWidth / Math.max(1, window.innerHeight));
+  const vHalfRad = THREE.MathUtils.degToRad(camera.fov / 2);
+  const tanV = Math.tan(vHalfRad);
+  const tanH = tanV * aspect;
+
+  const isMenusHidden = document.querySelector('.hud-layer')?.classList.contains('is-menus-hidden');
+  const clearVertRatio = isMenusHidden
+    ? 0.92
+    : Math.max(0.68, (window.innerHeight - 148) / Math.max(320, window.innerHeight));
+  const fillX = 0.9;
+  const fillY = clearVertRatio * 0.92;
+
+  const offset = basePos.clone().sub(look);
+  const baseDist = offset.length();
+  const dir = offset.clone().normalize();
+  const forward = dir.clone().negate();
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(forward, worldUp);
+  if (right.lengthSq() < 1e-6) {
+    right.set(1, 0, 0);
+  } else {
+    right.normalize();
+  }
+  const camUp = new THREE.Vector3().crossVectors(right, forward).normalize();
+
+  let requiredDist = baseDist;
+  const xs = [-BOARD_FRAME_HALF_EXTENT, BOARD_FRAME_HALF_EXTENT];
+  const ys = [0, BOARD_FRAME_MAX_Y];
+  const zs = [-BOARD_FRAME_HALF_EXTENT, BOARD_FRAME_HALF_EXTENT];
+  const corner = new THREE.Vector3();
+
+  for (const cx of xs) {
+    for (const cy of ys) {
+      for (const cz of zs) {
+        corner.set(cx, cy, cz).sub(look);
+        const xProj = Math.abs(corner.dot(right));
+        const yProj = Math.abs(corner.dot(camUp));
+        const zDepth = corner.dot(forward);
+
+        const distX = xProj / (tanH * fillX) - zDepth;
+        const distY = yProj / (tanV * fillY) - zDepth;
+        requiredDist = Math.max(requiredDist, distX, distY);
+      }
+    }
+  }
+
+  return {
+    pos: look.clone().addScaledVector(dir, requiredDist),
+    dist: requiredDist,
+  };
+}
+
 function getPresetPose(preset) {
   const sideSign = isVsAIMode() && gameConfig.playerColor === COLORS.BLACK ? -1 : 1;
+  let basePos;
+  let look;
+  let allowTopPolar = false;
+
   if (preset === 'cinematic') {
-    return {
-      pos: new THREE.Vector3(3.8 * sideSign, 3.15, 8.6 * sideSign),
-      look: new THREE.Vector3(0, 0.45, 0),
-      allowTopPolar: false,
-    };
+    basePos = new THREE.Vector3(3.8 * sideSign, 3.35, 8.8 * sideSign);
+    look = new THREE.Vector3(0, 0.35, 0);
+  } else if (preset === 'top') {
+    basePos = new THREE.Vector3(0, 14.8, 0.02 * sideSign);
+    look = new THREE.Vector3(0, 0.2, 0);
+    allowTopPolar = true;
+  } else {
+    // 'iso' par défaut
+    basePos = new THREE.Vector3(0, 8.8, 9.0 * sideSign);
+    look = new THREE.Vector3(0, 0.25, 0);
   }
-  if (preset === 'top') {
-    return {
-      pos: new THREE.Vector3(0, 14.4, 0.02 * sideSign),
-      look: new THREE.Vector3(0, 0.2, 0),
-      allowTopPolar: true,
-    };
-  }
-  // 'iso' par défaut
+
+  const fitted = fitCameraPoseToBoardFrame(basePos, look);
   return {
-    pos: new THREE.Vector3(0, 8.6, 8.8 * sideSign),
-    look: new THREE.Vector3(0, 0.25, 0),
-    allowTopPolar: false,
+    pos: fitted.pos,
+    look,
+    dist: fitted.dist,
+    allowTopPolar,
   };
 }
 
@@ -716,6 +779,9 @@ function setCameraPreset(preset, immediate = false) {
   }
 
   const pose = getPresetPose(preset);
+  if (controls) {
+    controls.maxDistance = Math.max(36, pose.dist * 1.45);
+  }
   if (immediate || !controls) {
     camera.position.copy(pose.pos);
     if (controls) {
@@ -845,6 +911,10 @@ async function executeMoveVisualAndEngine(move) {
 
   if (tutorialActive && !tutorialCompleted && wasHumanMover) {
     onTutorialHumanMovePlayed();
+  }
+
+  if (!tutorialActive) {
+    persistAutoSaveIfNeeded();
   }
 
   if (engine.status === 'checkmate' || engine.status === 'stalemate' || engine.status === 'draw') {
@@ -1267,13 +1337,18 @@ const learningRecommendedMoveEl = document.getElementById('learning-recommended-
 const learningReasonEl = document.getElementById('learning-reason');
 const learningPieceTipEl = document.getElementById('learning-piece-tip');
 const learningPieceTipTextEl = document.getElementById('learning-piece-tip-text');
+const learningPieceDiagramEl = document.getElementById('learning-piece-diagram');
 
 function updatePieceTipUI(pieceType) {
   if (!learningEnabled || !pieceType || !PIECE_LEARNING_TIPS[pieceType]) {
     learningPieceTipEl.classList.add('hidden');
+    learningPieceDiagramEl?.replaceChildren();
     return;
   }
   learningPieceTipTextEl.textContent = PIECE_LEARNING_TIPS[pieceType];
+  if (learningPieceDiagramEl) {
+    learningPieceDiagramEl.replaceChildren(createPieceDiagramSvg(pieceType));
+  }
   learningPieceTipEl.classList.remove('hidden');
 }
 
@@ -1903,9 +1978,53 @@ btnFullscreen?.addEventListener('click', async () => {
   }
 });
 
-document.addEventListener('fullscreenchange', syncFullscreenUI);
-document.addEventListener('webkitfullscreenchange', syncFullscreenUI);
+function handleFullscreenChange() {
+  syncFullscreenUI();
+  window.requestAnimationFrame(() => {
+    if (renderer) {
+      camera.aspect = window.innerWidth / Math.max(1, window.innerHeight);
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    }
+    setCameraPreset(activeCameraPreset, false);
+  });
+}
+
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 syncFullscreenUI();
+
+// --- Bouton Masquer / Afficher les menus ---
+const hudLayerEl = document.querySelector('.hud-layer');
+const btnToggleMenus = document.getElementById('btn-toggle-menus');
+const toggleMenusLabelEl = document.getElementById('toggle-menus-label');
+const menusIconHideEl = document.getElementById('menus-icon-hide');
+const menusIconShowEl = document.getElementById('menus-icon-show');
+let menusHidden = false;
+
+function setMenusHidden(hidden) {
+  menusHidden = Boolean(hidden);
+  hudLayerEl?.classList.toggle('is-menus-hidden', menusHidden);
+  if (btnToggleMenus) {
+    btnToggleMenus.setAttribute('aria-pressed', String(menusHidden));
+    btnToggleMenus.title = menusHidden
+      ? 'Faire réapparaître les menus'
+      : 'Masquer les menus pour dégager le plateau';
+  }
+  if (toggleMenusLabelEl) {
+    toggleMenusLabelEl.textContent = menusHidden ? 'Afficher menus' : 'Masquer menus';
+  }
+  menusIconHideEl?.classList.toggle('hidden', menusHidden);
+  menusIconShowEl?.classList.toggle('hidden', !menusHidden);
+  if (getFullscreenElement()) {
+    setCameraPreset(activeCameraPreset, false);
+  }
+}
+
+btnToggleMenus?.addEventListener('click', () => {
+  setMenusHidden(!menusHidden);
+});
 
 // --- Bouton Annuler ---
 btnUndo.addEventListener('click', () => {
@@ -1927,6 +2046,9 @@ btnUndo.addEventListener('click', () => {
   updatePieceTipUI(null);
   syncMeshesFromEngineImmediate();
   updateHUD();
+  if (!tutorialActive) {
+    persistAutoSaveIfNeeded();
+  }
   refreshLearningAdvice();
 });
 
@@ -2237,15 +2359,112 @@ function renderReferencePlate(color) {
   refRenderer.render(refScene, refCamera);
 }
 
-function openReferenceModal() {
-  openModal('modal-reference');
-  renderReferencePlate(refCurrentColor);
+const refViewGuideEl = document.getElementById('ref-view-guide');
+const refView3dEl = document.getElementById('ref-view-3d');
+const tabRefGuideBtn = document.getElementById('tab-ref-guide');
+const tabRef3dBtn = document.getElementById('tab-ref-3d');
+
+function populateBeginnerGuide() {
+  const basicsGrid = document.getElementById('beginner-basics-grid');
+  if (basicsGrid) {
+    basicsGrid.replaceChildren();
+    for (const item of BEGINNER_BASICS) {
+      const card = document.createElement('div');
+      card.className = 'beginner-basic-card';
+
+      const title = document.createElement('h3');
+      title.className = 'beginner-basic-title';
+      title.textContent = item.title;
+
+      const text = document.createElement('p');
+      text.className = 'beginner-basic-text';
+      text.textContent = item.text;
+
+      card.append(title, text);
+      basicsGrid.appendChild(card);
+    }
+  }
+
+  const piecesGrid = document.getElementById('beginner-pieces-grid');
+  if (piecesGrid) {
+    piecesGrid.replaceChildren();
+    for (const piece of PIECE_GUIDE_DATA) {
+      const card = document.createElement('article');
+      card.className = 'guide-piece-card';
+
+      const diagramWrap = document.createElement('div');
+      diagramWrap.className = 'guide-piece-diagram';
+      diagramWrap.appendChild(createPieceDiagramSvg(piece.type));
+
+      const valueEl = document.createElement('span');
+      valueEl.className = 'guide-piece-value';
+      valueEl.textContent = piece.value;
+      diagramWrap.appendChild(valueEl);
+
+      const body = document.createElement('div');
+      body.className = 'guide-piece-body';
+
+      const head = document.createElement('div');
+      head.className = 'guide-piece-head';
+
+      const nameEl = document.createElement('h3');
+      nameEl.className = 'guide-piece-name';
+      nameEl.textContent = piece.name;
+
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'guide-piece-badge';
+      badgeEl.textContent = piece.badge;
+
+      head.append(nameEl, badgeEl);
+
+      const summaryEl = document.createElement('p');
+      summaryEl.className = 'guide-piece-summary';
+      summaryEl.textContent = piece.summary;
+
+      const movesList = document.createElement('ul');
+      movesList.className = 'guide-piece-moves';
+      for (const line of piece.moves) {
+        const li = document.createElement('li');
+        li.textContent = line;
+        movesList.appendChild(li);
+      }
+
+      body.append(head, summaryEl, movesList);
+      card.append(diagramWrap, body);
+      piecesGrid.appendChild(card);
+    }
+  }
+}
+populateBeginnerGuide();
+
+function setReferenceTab(tab = 'guide') {
+  const isGuide = tab === 'guide';
+  refViewGuideEl?.classList.toggle('hidden', !isGuide);
+  refView3dEl?.classList.toggle('hidden', isGuide);
+
+  tabRefGuideBtn?.classList.toggle('is-active', isGuide);
+  tabRefGuideBtn?.setAttribute('aria-selected', String(isGuide));
+  tabRef3dBtn?.classList.toggle('is-active', !isGuide);
+  tabRef3dBtn?.setAttribute('aria-selected', String(!isGuide));
+
+  if (!isGuide) {
+    renderReferencePlate(refCurrentColor);
+  }
 }
 
-document.getElementById('btn-plate-top').addEventListener('click', openReferenceModal);
-document.getElementById('btn-plate-bottom').addEventListener('click', openReferenceModal);
-document.getElementById('ref-mat-w').addEventListener('click', () => renderReferencePlate('w'));
-document.getElementById('ref-mat-b').addEventListener('click', () => renderReferencePlate('b'));
+function openReferenceModal(initialTab = '3d') {
+  openModal('modal-reference');
+  setReferenceTab(initialTab);
+}
+
+tabRefGuideBtn?.addEventListener('click', () => setReferenceTab('guide'));
+tabRef3dBtn?.addEventListener('click', () => setReferenceTab('3d'));
+document.getElementById('btn-help-top')?.addEventListener('click', () => openReferenceModal('guide'));
+document.getElementById('btn-learning-help')?.addEventListener('click', () => openReferenceModal('guide'));
+document.getElementById('btn-plate-top')?.addEventListener('click', () => openReferenceModal('3d'));
+document.getElementById('btn-plate-bottom')?.addEventListener('click', () => openReferenceModal('3d'));
+document.getElementById('ref-mat-w')?.addEventListener('click', () => renderReferencePlate('w'));
+document.getElementById('ref-mat-b')?.addEventListener('click', () => renderReferencePlate('b'));
 
 // ============================================================================
 // 9B. ESPACE JOUEUR : IDENTIFIANT, CONNEXION & INSCRIPTION (SÉCURISÉ SERVEUR)
@@ -2613,6 +2832,412 @@ if (urlResetToken) {
 syncAuthUI();
 
 // ============================================================================
+// 9C. SAUVEGARDE & REPRISE DES PARTIES (SERVEUR + STOCKAGE LOCAL)
+// ============================================================================
+
+const LOCAL_SAVES_KEY = 'echecs_antiques_saved_games_v1';
+const LOCAL_AUTOSAVE_KEY = 'echecs_antiques_autosave_v1';
+
+const btnSaves = document.getElementById('btn-saves');
+const btnOpenSavesFromNewGame = document.getElementById('btn-open-saves-from-newgame');
+const savesStorageStatusEl = document.getElementById('saves-storage-status');
+const btnSavesAuth = document.getElementById('btn-saves-auth');
+const formSaveGame = document.getElementById('form-save-game');
+const saveGameTitleInput = /** @type {HTMLInputElement | null} */ (
+  document.getElementById('save-game-title')
+);
+const btnSaveCurrentGame = /** @type {HTMLButtonElement | null} */ (
+  document.getElementById('btn-save-current-game')
+);
+const savesFeedbackEl = document.getElementById('saves-feedback');
+const autosaveSlotCardEl = document.getElementById('autosave-slot-card');
+const autosaveMetaEl = document.getElementById('autosave-meta');
+const btnResumeAutosave = document.getElementById('btn-resume-autosave');
+const savedGamesEmptyEl = document.getElementById('saved-games-empty');
+const savedGamesListEl = document.getElementById('saved-games-list');
+
+let cachedSavedGames = [];
+
+function createClientSaveId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return `save-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function formatDefaultSaveTitle() {
+  const modeLabel =
+    gameConfig.mode === 'pvp'
+      ? 'Duel 2 Joueurs'
+      : `Vs ${AI_LEVELS[gameConfig.aiLevel]?.label || 'IA'}`;
+  const moveTotal = engine.moveHistory.length;
+  return moveTotal > 0 ? `${modeLabel} · ${moveTotal} coups` : `${modeLabel} · Début`;
+}
+
+function buildCurrentGamePayload(customTitle = '') {
+  const cleanTitle = (customTitle || '').trim().slice(0, 80) || formatDefaultSaveTitle();
+  return {
+    title: cleanTitle,
+    mode: gameConfig.mode,
+    aiLevel: gameConfig.aiLevel,
+    playerColor: gameConfig.playerColor,
+    learningEnabled: Boolean(learningEnabled),
+    cameraPreset: activeCameraPreset,
+    status: engine.status,
+    turn: engine.turn,
+    moveCount: engine.moveHistory.length,
+    moves: engine.exportMoves(),
+  };
+}
+
+function loadLocalSavedGames() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_SAVES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalSavedGames(games) {
+  try {
+    window.localStorage.setItem(LOCAL_SAVES_KEY, JSON.stringify(games.slice(0, 25)));
+  } catch {
+    // Ignorer si le stockage local est indisponible ou plein
+  }
+}
+
+function loadLocalAutoSave() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_AUTOSAVE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.moves) || parsed.moves.length === 0) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistAutoSaveIfNeeded() {
+  if (engine.moveHistory.length === 0) return;
+  try {
+    const payload = {
+      ...buildCurrentGamePayload('Dernière partie en cours'),
+      savedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(LOCAL_AUTOSAVE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignorer les erreurs de quota localStorage
+  }
+}
+
+function formatSavedGameMeta(game) {
+  const modeText =
+    game.mode === 'pvp'
+      ? '2 Joueurs'
+      : game.mode === 'learning'
+      ? `Apprentissage (${AI_LEVELS[game.aiLevel]?.label || 'IA'})`
+      : `Contre l'IA (${AI_LEVELS[game.aiLevel]?.label || 'IA'})`;
+
+  const sideText =
+    game.mode === 'pvp'
+      ? game.turn === COLORS.WHITE
+        ? 'Trait aux Blancs'
+        : 'Trait aux Noirs'
+      : game.playerColor === COLORS.WHITE
+      ? 'Camp Blancs'
+      : 'Camp Noirs';
+
+  const count = Array.isArray(game.moves) ? game.moves.length : Number(game.moveCount) || 0;
+  const movesText = `${count} ${count > 1 ? 'coups' : 'coup'}`;
+
+  let dateText = '';
+  if (game.savedAt) {
+    const d = new Date(game.savedAt);
+    if (!Number.isNaN(d.getTime())) {
+      dateText = d.toLocaleString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+  }
+
+  return [modeText, sideText, movesText, dateText].filter(Boolean).join(' · ');
+}
+
+function getStatusBadgeLabel(status) {
+  if (status === 'checkmate') return 'Échec et mat';
+  if (status === 'stalemate' || status === 'draw') return 'Partie nulle';
+  if (status === 'check') return 'Échec';
+  return 'En cours';
+}
+
+function syncSavesStorageBanner() {
+  const loggedIn = Boolean(authToken && currentUser);
+  if (savesStorageStatusEl) {
+    savesStorageStatusEl.textContent = loggedIn
+      ? `Compte actif : ${currentUser.email} — Parties sauvegardées sur votre compte`
+      : 'Sauvegarde locale sur cet appareil · Connectez-vous pour enregistrer sur votre compte';
+  }
+  if (btnSavesAuth) {
+    btnSavesAuth.textContent = loggedIn ? 'Mon compte' : 'Se connecter';
+  }
+}
+
+function renderAutoSaveCard() {
+  const autoGame = loadLocalAutoSave();
+  if (!autosaveSlotCardEl || !autosaveMetaEl) return;
+  if (!autoGame) {
+    autosaveSlotCardEl.classList.add('hidden');
+    return;
+  }
+  autosaveMetaEl.textContent = formatSavedGameMeta(autoGame);
+  autosaveSlotCardEl.classList.remove('hidden');
+}
+
+function renderSavedGamesList(games) {
+  if (!savedGamesListEl || !savedGamesEmptyEl) return;
+  savedGamesListEl.replaceChildren();
+
+  if (!games || games.length === 0) {
+    savedGamesEmptyEl.classList.remove('hidden');
+    return;
+  }
+
+  savedGamesEmptyEl.classList.add('hidden');
+
+  for (const game of games) {
+    const item = document.createElement('div');
+    item.className = 'save-item';
+
+    const info = document.createElement('div');
+    info.className = 'save-item-info';
+
+    const head = document.createElement('div');
+    head.className = 'save-item-head';
+
+    const titleEl = document.createElement('strong');
+    titleEl.className = 'save-item-title';
+    titleEl.textContent = game.title || 'Partie sauvegardée';
+
+    const badgeEl = document.createElement('span');
+    badgeEl.className = 'save-badge';
+    badgeEl.textContent = getStatusBadgeLabel(game.status);
+
+    head.append(titleEl, badgeEl);
+
+    const metaEl = document.createElement('p');
+    metaEl.className = 'save-item-meta';
+    metaEl.textContent = formatSavedGameMeta(game);
+
+    info.append(head, metaEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'save-item-actions';
+
+    const loadBtn = document.createElement('button');
+    loadBtn.type = 'button';
+    loadBtn.className = 'btn-primary btn-compact';
+    loadBtn.textContent = 'Charger';
+    loadBtn.addEventListener('click', () => {
+      applySavedGame(game);
+    });
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'btn-danger-compact';
+    delBtn.textContent = 'Supprimer';
+    delBtn.addEventListener('click', () => {
+      deleteSavedGameById(game.id);
+    });
+
+    actions.append(loadBtn, delBtn);
+    item.append(info, actions);
+    savedGamesListEl.appendChild(item);
+  }
+}
+
+async function refreshSavedGamesList() {
+  syncSavesStorageBanner();
+  renderAutoSaveCard();
+
+  if (authToken) {
+    try {
+      const data = await apiFetch('/api/games');
+      cachedSavedGames = Array.isArray(data.games) ? data.games : [];
+    } catch (err) {
+      setBannerFeedback(
+        savesFeedbackEl,
+        err instanceof Error ? err.message : 'Impossible de charger les sauvegardes.'
+      );
+      cachedSavedGames = [];
+    }
+  } else {
+    cachedSavedGames = loadLocalSavedGames();
+  }
+
+  renderSavedGamesList(cachedSavedGames);
+}
+
+function applySavedGame(game) {
+  if (!game || !Array.isArray(game.moves)) {
+    setBannerFeedback(savesFeedbackEl, 'Cette sauvegarde est invalide.');
+    return;
+  }
+
+  const loaded = engine.loadFromMoves(game.moves);
+  if (!loaded) {
+    setBannerFeedback(
+      savesFeedbackEl,
+      'Impossible de restaurer cette partie (historique de coups invalide).'
+    );
+    return;
+  }
+
+  stopInteractiveTutorial();
+  aiSessionToken++;
+  isAiThinking = false;
+  pendingPromotion = null;
+  selectedSquare = null;
+  legalMovesForSelected = [];
+  clear3DHintArrow();
+  clearLearningFeedback();
+  updatePieceTipUI(null);
+
+  gameConfig.mode =
+    game.mode === 'pvp' || game.mode === 'learning' || game.mode === 'ai' ? game.mode : 'ai';
+  gameConfig.aiLevel = [1, 2, 3].includes(Number(game.aiLevel)) ? Number(game.aiLevel) : 2;
+  gameConfig.playerColor = game.playerColor === COLORS.BLACK ? COLORS.BLACK : COLORS.WHITE;
+
+  syncMeshesFromEngineImmediate();
+  setLearningEnabled(Boolean(game.learningEnabled));
+  setCameraPreset(
+    CAMERA_STYLE_ORDER.includes(game.cameraPreset) ? game.cameraPreset : 'iso',
+    false
+  );
+  updateHUD();
+  persistAutoSaveIfNeeded();
+
+  closeModal('modal-saves');
+  closeModal('modal-new-game');
+  closeModal('modal-gameover');
+
+  if (
+    engine.status !== 'checkmate' &&
+    engine.status !== 'stalemate' &&
+    engine.status !== 'draw' &&
+    isVsAIMode() &&
+    engine.turn !== gameConfig.playerColor
+  ) {
+    maybeTriggerAIMove();
+  } else {
+    refreshLearningAdvice();
+  }
+}
+
+async function deleteSavedGameById(gameId) {
+  setBannerFeedback(savesFeedbackEl, '');
+  if (authToken) {
+    try {
+      await apiFetch(`/api/games/${encodeURIComponent(gameId)}`, { method: 'DELETE' });
+      await refreshSavedGamesList();
+      setBannerFeedback(savesFeedbackEl, 'Partie supprimée.', true);
+    } catch (err) {
+      setBannerFeedback(
+        savesFeedbackEl,
+        err instanceof Error ? err.message : 'Impossible de supprimer cette sauvegarde.'
+      );
+    }
+    return;
+  }
+
+  const next = loadLocalSavedGames().filter((g) => g.id !== gameId);
+  writeLocalSavedGames(next);
+  cachedSavedGames = next;
+  renderSavedGamesList(next);
+  setBannerFeedback(savesFeedbackEl, 'Partie supprimée.', true);
+}
+
+async function openSavesModal() {
+  setBannerFeedback(savesFeedbackEl, '');
+  if (saveGameTitleInput) {
+    saveGameTitleInput.value = '';
+    saveGameTitleInput.placeholder = formatDefaultSaveTitle();
+  }
+  openModal('modal-saves');
+  await refreshSavedGamesList();
+}
+
+btnSaves?.addEventListener('click', () => {
+  openSavesModal();
+});
+
+btnOpenSavesFromNewGame?.addEventListener('click', () => {
+  openSavesModal();
+});
+
+btnSavesAuth?.addEventListener('click', () => {
+  closeModal('modal-saves');
+  openAuthModal('login');
+});
+
+btnResumeAutosave?.addEventListener('click', () => {
+  const autoGame = loadLocalAutoSave();
+  if (!autoGame) return;
+  applySavedGame(autoGame);
+});
+
+formSaveGame?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  setBannerFeedback(savesFeedbackEl, '');
+
+  if (isAiThinking || pendingPromotion) {
+    setBannerFeedback(
+      savesFeedbackEl,
+      "Veuillez patienter la fin du coup ou de la promotion avant de sauvegarder."
+    );
+    return;
+  }
+
+  const payload = buildCurrentGamePayload(saveGameTitleInput?.value || '');
+  if (btnSaveCurrentGame) btnSaveCurrentGame.disabled = true;
+
+  try {
+    if (authToken) {
+      await apiFetch('/api/games', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } else {
+      const localList = loadLocalSavedGames();
+      localList.unshift({
+        id: createClientSaveId(),
+        ...payload,
+        savedAt: new Date().toISOString(),
+      });
+      writeLocalSavedGames(localList);
+    }
+
+    if (saveGameTitleInput) saveGameTitleInput.value = '';
+    await refreshSavedGamesList();
+    setBannerFeedback(savesFeedbackEl, 'Partie sauvegardée avec succès !', true);
+  } catch (err) {
+    setBannerFeedback(
+      savesFeedbackEl,
+      err instanceof Error ? err.message : 'Échec de la sauvegarde de la partie.'
+    );
+  } finally {
+    if (btnSaveCurrentGame) btnSaveCurrentGame.disabled = false;
+  }
+});
+
+// ============================================================================
 // 10. BOUCLE DE RENDU 60 FPS & REDIMENSIONNEMENT
 // ============================================================================
 
@@ -2748,10 +3373,15 @@ if (renderer) {
 window.addEventListener('resize', () => {
   updateTutorialSpotlight();
   if (!renderer) return;
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const newAspect = window.innerWidth / Math.max(1, window.innerHeight);
+  camera.aspect = newAspect;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+  if (getFullscreenElement() || Math.abs(newAspect - lastViewportAspect) > 0.06) {
+    lastViewportAspect = newAspect;
+    setCameraPreset(activeCameraPreset, false);
+  }
 });
 
 window.addEventListener('beforeunload', () => {
