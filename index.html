@@ -248,7 +248,7 @@
             </div>
 
             <!-- Recommandation du stratège -->
-            <div class="learning-section">
+            <div class="learning-section learning-coach-section">
               <div class="learning-coach-head">
                 <span class="learning-section-title">Conseil du stratège</span>
                 <span id="learning-eval-score" class="learning-eval">0.0</span>
@@ -259,6 +259,16 @@
               <p id="learning-reason" class="learning-text">
                 Observez le développement de vos pièces vers le centre et la protection de votre Empereur.
               </p>
+              <div class="learning-coach-footer">
+                <button
+                  id="btn-coach-more-info"
+                  type="button"
+                  class="learning-more-info-btn"
+                  aria-haspopup="dialog"
+                >
+                  Plus d’infos
+                </button>
+              </div>
             </div>
 
             <!-- Rappel contextuel sur la pièce sélectionnée -->
@@ -298,6 +308,10 @@
           <span id="voice-status-text" class="voice-status-text">
             Micro actif — Dites par ex. « C1 vers C3 »
           </span>
+        </div>
+
+        <div id="camera-view-toast" class="camera-view-toast hidden" aria-live="polite">
+          <span id="camera-view-toast-text">Vision : 3D</span>
         </div>
 
         <!-- Barre inférieure -->
@@ -558,6 +572,20 @@
                 </button>
               </div>
             </div>
+
+            <div class="form-section">
+              <span class="form-label">Rachat de pièce par question (Culture générale)</span>
+              <div class="segmented-grid two-cols" role="radiogroup" aria-label="Rachat par question">
+                <button type="button" class="choice-card is-selected" data-quiz-mode="on">
+                  <strong>Activé (Recommandé)</strong>
+                  <span>Une bonne réponse vous rend votre pièce capturée</span>
+                </button>
+                <button type="button" class="choice-card" data-quiz-mode="off">
+                  <strong>Désactivé</strong>
+                  <span>Règles d'échecs classiques sans question</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="modal-footer modal-footer-split">
@@ -774,6 +802,11 @@
                 <strong id="gameover-black-lost" class="stat-value">0</strong>
               </div>
             </div>
+
+            <div id="gameover-quiz-summary" class="gameover-quiz-summary">
+              <h3 class="gameover-section-title">Bilan des Gains &amp; Réponses</h3>
+              <div id="gameover-players-grid" class="gameover-players-grid"></div>
+            </div>
           </div>
           <div class="modal-footer">
             <button type="button" class="btn-secondary" data-close-modal="modal-gameover">Examiner l'échiquier</button>
@@ -906,7 +939,7 @@
                 </div>
 
                 <p id="forgot-smtp-note" class="auth-smtp-note hidden">
-                  Remarque VPS : configurez les variables <code>SMTP_HOST</code>, <code>SMTP_USER</code> et <code>SMTP_PASS</code> dans votre fichier <code>.env</code> pour activer l'envoi d'e-mails.
+                  Remarque VPS : configurez les variables <code>SMTP_HOST</code>, <code>SMTP_PORT</code> (587 ou 465), <code>SMTP_USER</code>, <code>SMTP_PASS</code> et <code>SMTP_FROM</code> dans votre fichier <code>.env</code> pour activer l'envoi d'e-mails.
                 </p>
 
                 <p id="forgot-feedback" class="auth-feedback hidden" role="alert"></p>
@@ -1079,6 +1112,131 @@
 
           <div class="modal-footer">
             <button type="button" class="btn-secondary" data-close-modal="modal-saves">Fermer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 7 : DÉFI DE RACHAT DE PIÈCE PAR QUESTION                    -->
+      <!-- ================================================================== -->
+      <div
+        id="modal-capture-quiz"
+        class="modal-backdrop hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="title-capture-quiz"
+      >
+        <div class="modal-card modal-quiz-card">
+          <div class="modal-header">
+            <div>
+              <p id="quiz-modal-kicker" class="modal-kicker">Pièce menacée de perte</p>
+              <h2 id="title-capture-quiz" class="modal-title">Défi de Rachat</h2>
+            </div>
+          </div>
+
+          <div class="modal-body">
+            <div id="quiz-piece-banner" class="quiz-piece-banner">
+              <span id="quiz-victim-swatch" class="material-swatch swatch-white" aria-hidden="true"></span>
+              <div class="quiz-piece-info">
+                <strong id="quiz-piece-title">Votre pièce vient d'être capturée !</strong>
+                <span id="quiz-piece-sub">Répondez juste pour récupérer votre pièce et repousser l'adversaire.</span>
+              </div>
+            </div>
+
+            <!-- Étape 1 : Choix du thème -->
+            <div id="quiz-step-theme">
+              <p class="quiz-prompt-label">Choisissez le thème de votre question :</p>
+              <div id="quiz-theme-grid" class="quiz-theme-grid"></div>
+            </div>
+
+            <!-- Étape 2 : Question & 4 choix -->
+            <div id="quiz-step-question" class="hidden">
+              <div class="quiz-question-meta">
+                <span id="quiz-active-theme-badge" class="quiz-theme-badge">Histoire</span>
+                <button id="btn-quiz-change-theme" type="button" class="btn-link-subtle">
+                  Changer de thème
+                </button>
+              </div>
+
+              <p id="quiz-question-text" class="quiz-question-text"></p>
+              <div id="quiz-choices-list" class="quiz-choices-list"></div>
+
+              <div id="quiz-answer-feedback" class="quiz-answer-feedback hidden" role="status">
+                <strong id="quiz-feedback-title">Bonne réponse !</strong>
+                <p id="quiz-feedback-explanation" class="quiz-feedback-explanation"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer modal-footer-split">
+            <button id="btn-quiz-forfeit" type="button" class="btn-secondary">
+              Abandonner la pièce
+            </button>
+            <button id="btn-quiz-continue" type="button" class="btn-primary hidden">
+              Continuer
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================================================================== -->
+      <!-- MODALE 8 : EXPLICATIONS DÉTAILLÉES DU CONSEIL STRATÉGIQUE          -->
+      <!-- ================================================================== -->
+      <div
+        id="modal-coach-info"
+        class="modal-backdrop hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="title-coach-info"
+      >
+        <div class="modal-card modal-coach-card">
+          <div class="modal-header">
+            <div>
+              <p class="modal-kicker">Conseil du Stratège</p>
+              <h2 id="title-coach-info" class="modal-title">Analyse &amp; Explications Détaillées</h2>
+            </div>
+            <button type="button" class="modal-close" data-close-modal="modal-coach-info" aria-label="Fermer">×</button>
+          </div>
+
+          <div class="modal-body coach-info-body">
+            <div class="coach-info-summary">
+              <div class="coach-info-summary-top">
+                <span id="coach-info-phase" class="coach-info-badge">Ouverture</span>
+                <span id="coach-info-eval-badge" class="coach-info-eval">0.0</span>
+              </div>
+              <h3 id="coach-info-move" class="coach-info-move-title"></h3>
+              <p id="coach-info-objective" class="coach-info-objective"></p>
+              <p id="coach-info-eval-desc" class="coach-info-eval-desc"></p>
+            </div>
+
+            <div id="coach-info-reasons-block" class="coach-info-section">
+              <h4 class="coach-info-section-title">Pourquoi ce coup est conseillé</h4>
+              <ul id="coach-info-reasons-list" class="coach-info-list"></ul>
+            </div>
+
+            <div id="coach-info-candidates-block" class="coach-info-section">
+              <h4 class="coach-info-section-title">Meilleures options comparées</h4>
+              <div id="coach-info-candidates-list" class="coach-candidates-list"></div>
+            </div>
+
+            <div id="coach-info-threats-block" class="coach-info-section">
+              <h4 class="coach-info-section-title">Sécurité &amp; vigilance</h4>
+              <p id="coach-info-threats-text" class="coach-info-paragraph"></p>
+            </div>
+
+            <div class="coach-info-section">
+              <h4 id="coach-info-phase-title" class="coach-info-section-title">Principes stratégiques</h4>
+              <ul id="coach-info-phase-tips" class="coach-info-list"></ul>
+            </div>
+          </div>
+
+          <div class="modal-footer modal-footer-split">
+            <button id="btn-coach-info-show-3d" type="button" class="btn-secondary">
+              Afficher le conseil 3D
+            </button>
+            <button type="button" class="btn-primary" data-close-modal="modal-coach-info">
+              Retour au plateau
+            </button>
           </div>
         </div>
       </div>

@@ -29,11 +29,10 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // ============================================================================
 
 export function isSmtpConfigured() {
-  return Boolean(
-    process.env.SMTP_HOST &&
-      process.env.SMTP_USER &&
-      process.env.SMTP_PASS
-  );
+  const host = (process.env.SMTP_HOST || '').trim();
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
+  return Boolean(host && user && pass);
 }
 
 /**
@@ -41,8 +40,8 @@ export function isSmtpConfigured() {
  * @param {number} defaultPort
  */
 function getSafeResetBaseUrl(req, defaultPort) {
-  const configured = process.env.APP_URL;
-  if (configured) {
+  const configured = (process.env.APP_URL || '').trim();
+  if (configured && configured !== 'MY_APP_URL') {
     try {
       const parsed = new URL(configured);
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
@@ -53,11 +52,13 @@ function getSafeResetBaseUrl(req, defaultPort) {
     }
   }
 
-  const rawHost = req.get('host') || `localhost:${defaultPort}`;
+  const forwardedHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
+  const rawHost = forwardedHost || req.get('host') || `localhost:${defaultPort}`;
   const safeHost = /^[a-zA-Z0-9.-]+(:\d{1,5})?$/.test(rawHost)
     ? rawHost
     : `localhost:${defaultPort}`;
-  const proto = req.protocol === 'https' ? 'https' : 'http';
+  const forwardedProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase();
+  const proto = forwardedProto === 'https' || req.protocol === 'https' ? 'https' : 'http';
   return `${proto}://${safeHost}`;
 }
 
@@ -77,20 +78,42 @@ function escapeHtmlAttribute(value) {
  * @param {string} resetUrl
  */
 async function sendPasswordResetEmail(toEmail, resetUrl) {
+  const host = (process.env.SMTP_HOST || '').trim();
+  const user = (process.env.SMTP_USER || '').trim();
+  let pass = (process.env.SMTP_PASS || '').trim();
+  const rawFrom = (process.env.SMTP_FROM || '').trim();
+
+  // Les mots de passe d'application Gmail sont souvent copiés par groupes de 4 lettres avec espaces
+  if (host.toLowerCase().includes('gmail') && /^[a-zA-Z]{4}(?:\s+[a-zA-Z]{4}){3}$/.test(pass)) {
+    pass = pass.replace(/\s+/g, '');
+  }
+
   const port = Number(process.env.SMTP_PORT) || 587;
-  const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+  // Port 587 utilise STARTTLS (secure: false), port 465 utilise TLS implicite (secure: true)
+  const secure = port === 465 || (process.env.SMTP_SECURE === 'true' && port !== 587);
+
+  const rawSender = rawFrom || (user.includes('@') ? user : '');
+  if (!rawSender) {
+    const cfgErr = /** @type {any} */ (new Error('Adresse expéditeur SMTP_FROM manquante.'));
+    cfgErr.code = 'INVALID_SMTP_FROM';
+    throw cfgErr;
+  }
+  const fromAddress = rawSender.includes('<') ? rawSender : `Échecs Antiques 3D <${rawSender}>`;
 
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
+    host,
     port,
     secure,
+    requireTLS: port === 587,
+    connectionTimeout: 12000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+      user,
+      pass,
     },
   });
 
-  const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
   const subject = 'Échecs Antiques 3D — Réinitialisation de votre mot de passe';
 
   const text = [
@@ -122,13 +145,24 @@ async function sendPasswordResetEmail(toEmail, resetUrl) {
     </div>
   `;
 
-  await transporter.sendMail({
+  const info = await transporter.sendMail({
     from: fromAddress,
     to: toEmail,
     subject,
     text,
     html,
   });
+
+  if (
+    (Array.isArray(info.rejected) && info.rejected.length > 0) ||
+    (Array.isArray(info.accepted) && info.accepted.length === 0)
+  ) {
+    const rejErr = /** @type {any} */ (
+      new Error(`Destinataire refusé par le serveur SMTP (${(info.rejected || []).join(', ')}).`)
+    );
+    rejErr.code = 'SMTP_REJECTED';
+    throw rejErr;
+  }
 }
 
 // ============================================================================
@@ -506,6 +540,17 @@ export function createAuthRouter(options = {}) {
         return;
       }
 
+      if (!isSmtpConfigured()) {
+        console.warn(
+          'Demande de réinitialisation refusée : SMTP non configuré (SMTP_HOST/SMTP_USER/SMTP_PASS manquants).'
+        );
+        res.status(503).json({
+          error:
+            "L'envoi d'e-mails (SMTP) n'est pas encore configuré sur ce serveur. Renseignez SMTP_HOST, SMTP_USER, SMTP_PASS et SMTP_FROM dans le fichier .env puis redémarrez le serveur.",
+        });
+        return;
+      }
+
       const emailLower = rawEmail.trim().toLowerCase();
       /** @type {string | null} */
       let targetEmail = null;
@@ -521,22 +566,64 @@ export function createAuthRouter(options = {}) {
         targetEmail = user.email;
       });
 
-      if (targetEmail && rawResetToken) {
-        if (isSmtpConfigured()) {
-          const baseUrl = getSafeResetBaseUrl(req, defaultPort);
-          const resetUrl = `${baseUrl}/?resetToken=${encodeURIComponent(rawResetToken)}`;
-          await sendPasswordResetEmail(targetEmail, resetUrl);
-        } else {
-          console.warn(
-            'Demande de réinitialisation reçue, mais SMTP non configuré (SMTP_HOST/SMTP_USER/SMTP_PASS manquants).'
-          );
+      if (!targetEmail || !rawResetToken) {
+        res.status(404).json({
+          error:
+            "Aucun compte n'est enregistré avec cette adresse e-mail sur ce serveur. Vérifiez l'adresse ou créez un compte via « Inscription ».",
+        });
+        return;
+      }
+
+      const baseUrl = getSafeResetBaseUrl(req, defaultPort);
+      const resetUrl = `${baseUrl}/?resetToken=${encodeURIComponent(rawResetToken)}`;
+
+      try {
+        await sendPasswordResetEmail(targetEmail, resetUrl);
+      } catch (mailErr) {
+        // Annuler le jeton si l'envoi SMTP a échoué
+        await saveUsersSerialized((users) => {
+          const user = users.find((u) => u.emailLower === emailLower);
+          if (user) {
+            delete user.resetTokenHash;
+            delete user.resetTokenExpiresAt;
+          }
+        }).catch(() => {});
+
+        const code = /** @type {any} */ (mailErr)?.code || '';
+        const respCode = /** @type {any} */ (mailErr)?.responseCode;
+        console.error('Échec envoi e-mail SMTP:', code, respCode, mailErr);
+
+        if (code === 'EAUTH' || respCode === 535 || respCode === 534) {
+          res.status(502).json({
+            error:
+              "Authentification SMTP refusée par le serveur mail. Vérifiez SMTP_USER et SMTP_PASS (avec Gmail, un « mot de passe d'application » à 16 caractères est obligatoire).",
+          });
+          return;
         }
+        if (code === 'INVALID_SMTP_FROM') {
+          res.status(502).json({
+            error:
+              "Adresse d'expéditeur invalide : définissez une adresse e-mail valide dans SMTP_FROM.",
+          });
+          return;
+        }
+        if (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ESOCKET') {
+          res.status(502).json({
+            error:
+              'Impossible de joindre le serveur SMTP (vérifiez SMTP_HOST, SMTP_PORT 587/465 et que le pare-feu du VPS autorise les connexions sortantes).',
+          });
+          return;
+        }
+        res.status(502).json({
+          error: "Le serveur SMTP a refusé ou n'a pas pu délivrer l'e-mail. Vérifiez les journaux du serveur.",
+        });
+        return;
       }
 
       res.json({
         ok: true,
         message:
-          "Si un compte correspond à cette adresse e-mail, un message contenant le lien de réinitialisation vient d'être envoyé.",
+          "Un e-mail contenant le lien de réinitialisation vient d'être envoyé. Pensez aussi à vérifier votre dossier Spam / Indésirables.",
       });
     } catch (err) {
       console.error('Erreur mot de passe oublié:', err);

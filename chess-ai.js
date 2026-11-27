@@ -794,6 +794,189 @@ function formatMoveLabelFr(board, move) {
   return `${name} ${from} ${action} ${to}${promo}`;
 }
 
+export function getPhaseStrategyTips(phase) {
+  if (phase === 'Ouverture') {
+    return {
+      title: 'Principes de l’Ouverture',
+      tips: [
+        'Contrôlez le centre (cases d4, d5, e4, e5) avec vos pions et vos pièces légères.',
+        'Développez vos Cavaliers et vos Fous avant de sortir la Dame trop tôt.',
+        'Mettez rapidement votre Roi à l’abri grâce au roque (petit ou grand roque) et reliez vos Tours.',
+      ],
+    };
+  }
+  if (phase === 'Finale') {
+    return {
+      title: 'Principes de la Finale',
+      tips: [
+        'Activez votre Roi : en finale, l’Empereur devient une pièce d’attaque et de soutien centrale.',
+        'Créez et poussez un pion passé vers la 8e rangée pour forcer la promotion.',
+        'Placez vos Tours derrière les pions passés (les vôtres ou ceux de l’adversaire).',
+      ],
+    };
+  }
+  return {
+    title: 'Principes du Milieu de jeu',
+    tips: [
+      'Coordonnez vos pièces vers des objectifs communs (attaque sur le Roi ou faiblesse de pions).',
+      'Placez vos Tours sur les colonnes ouvertes ou semi-ouvertes pour dominer le terrain.',
+      'Surveillez les motifs tactiques : fourchettes de Cavalier, clouages de Fou/Tour et pièces non défendues.',
+    ],
+  };
+}
+
+function describeEvaluationMeaning(whiteAdvantageCp, turnColor) {
+  if (Math.abs(whiteAdvantageCp) > 50000) {
+    return whiteAdvantageCp > 0
+      ? 'Les Blancs (Marbre) disposent d’un mat forcé.'
+      : 'Les Noirs (Bronze) disposent d’un mat forcé.';
+  }
+  const absPawns = Math.abs(whiteAdvantageCp) / 100;
+  if (absPawns < 0.35) {
+    return 'La position est globalement équilibrée : aucun camp n’a encore pris d’avantage décisif.';
+  }
+  const leader = whiteAdvantageCp > 0 ? 'les Blancs (Marbre)' : 'les Noirs (Bronze)';
+  const yourSide =
+    (whiteAdvantageCp > 0 && turnColor === COLORS.WHITE) ||
+    (whiteAdvantageCp < 0 && turnColor === COLORS.BLACK);
+  const strength =
+    absPawns >= 3
+      ? 'un avantage décisif'
+      : absPawns >= 1.2
+        ? 'un net avantage'
+        : 'un léger avantage';
+  return `Score de ${whiteAdvantageCp >= 0 ? '+' : ''}${(whiteAdvantageCp / 100).toFixed(1)} pion(s) : ${leader} possèdent ${strength}${yourSide ? ' en votre faveur' : ''}.`;
+}
+
+function buildDetailedAnalysis(state, bestMove, bestScore, inCheckBefore, threatsBefore, phase, scoredMoves) {
+  const board = state.board;
+  const moving = board[bestMove.fromRow][bestMove.fromCol];
+  const color = moving.color;
+  const enemy = oppositeColor(color);
+  const fromSq = squareToAlgebraic(bestMove.fromRow, bestMove.fromCol);
+  const toSq = squareToAlgebraic(bestMove.toRow, bestMove.toCol);
+  const movingName = PIECE_SHORT_FR[moving.type] || 'Pièce';
+
+  let objectiveTitle = 'Amélioration positionnelle';
+  if (bestScore > 90000) objectiveTitle = 'Échec et mat forcé';
+  else if (inCheckBefore) objectiveTitle = 'Parade de l’échec';
+  else if (bestMove.promotion) objectiveTitle = 'Promotion décisive';
+  else if (bestMove.isCastle) objectiveTitle = 'Mise à l’abri du Roi (Roque)';
+  else if (bestMove.captureType) objectiveTitle = 'Gain matériel et pression';
+  else if (threatsBefore.some((t) => t.row === bestMove.fromRow && t.col === bestMove.fromCol)) {
+    objectiveTitle = 'Sauvetage d’une pièce menacée';
+  } else if ((bestMove.toRow === 3 || bestMove.toRow === 4) && (bestMove.toCol === 3 || bestMove.toCol === 4)) {
+    objectiveTitle = 'Contrôle stratégique du centre';
+  } else if (phase === 'Ouverture' && (moving.type === 'n' || moving.type === 'b')) {
+    objectiveTitle = 'Développement des pièces légères';
+  }
+
+  const tacticalBreakdown = [];
+
+  if (inCheckBefore) {
+    tacticalBreakdown.push(
+      'Votre Roi est actuellement attaqué : ce coup répond directement à l’échec tout en préservant l’équilibre de votre défense.'
+    );
+  }
+
+  if (bestMove.isCastle) {
+    tacticalBreakdown.push(
+      'Le roque met l’Empereur en sécurité derrière son bouclier de pions et active immédiatement la Tour vers le centre.'
+    );
+  } else if (bestMove.promotion) {
+    tacticalBreakdown.push(
+      `En atteignant ${toSq}, votre Pion est promu en ${PIECE_SHORT_FR[bestMove.promotion]}, augmentant massivement votre puissance de frappe.`
+    );
+  } else if (bestMove.captureType) {
+    const capName = PIECE_SHORT_FR[bestMove.captureType];
+    const capPts = Math.round(PIECE_VALUES[bestMove.captureType] / 100);
+    tacticalBreakdown.push(
+      `Vous capturez un ${capName} adverse en ${toSq} (valeur ≈ ${capPts} point${capPts > 1 ? 's' : ''}), ce qui affaiblit la structure ennemie.`
+    );
+  } else {
+    tacticalBreakdown.push(
+      `Déplacer le ${movingName} de ${fromSq} vers ${toSq} améliore son rayon d’action et libère la coordination de vos autres pièces.`
+    );
+  }
+
+  const rescued = threatsBefore.find((t) => t.row === bestMove.fromRow && t.col === bestMove.fromCol);
+  if (rescued) {
+    tacticalBreakdown.push(
+      `Votre ${PIECE_SHORT_FR[rescued.type]} en ${rescued.sq} était sous le feu adverse : ce déplacement le sort de la zone de danger.`
+    );
+  }
+
+  // Simuler le coup pour observer l'état tactique après exécution
+  const undo = makeMoveFast(state, bestMove);
+  const enemyKing = findKingFast(state.board, enemy);
+  const givesCheck = enemyKing && isAttackedFast(state.board, enemyKing.row, enemyKing.col, color);
+  if (givesCheck) {
+    tacticalBreakdown.push(
+      'Ce coup donne immédiatement échec au Roi adverse, le forçant à réagir et vous laissant l’initiative.'
+    );
+  }
+
+  const destAttacked = isAttackedFast(state.board, bestMove.toRow, bestMove.toCol, enemy);
+  const destDefended = isAttackedFast(state.board, bestMove.toRow, bestMove.toCol, color);
+  if (destAttacked && destDefended) {
+    tacticalBreakdown.push(
+      `La case ${toSq} est disputée, mais votre pièce y est solidement soutenue par vos propres forces.`
+    );
+  } else if (!destAttacked && !bestMove.isCastle) {
+    tacticalBreakdown.push(
+      `Sur ${toSq}, votre ${movingName} occupe une case sûre qui n’est contrôlée par aucune pièce ennemie.`
+    );
+  }
+
+  // Vérifier si de nouvelles pièces adverses sont attaquées après le coup
+  const attackedTargets = [];
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const target = state.board[r][c];
+      if (!target || target.color !== enemy || target.type === 'k' || target.type === 'p') continue;
+      if (isAttackedFast(state.board, r, c, color)) {
+        attackedTargets.push(`${PIECE_SHORT_FR[target.type]} en ${squareToAlgebraic(r, c)}`);
+      }
+    }
+  }
+  if (attackedTargets.length > 0 && !bestMove.captureType) {
+    tacticalBreakdown.push(
+      `Pression offensive : après ce coup, vous menacez ${attackedTargets.slice(0, 2).join(' et ')}.`
+    );
+  }
+
+  unmakeMoveFast(state, bestMove, undo);
+
+  if (
+    (bestMove.toRow === 3 || bestMove.toRow === 4) &&
+    (bestMove.toCol === 3 || bestMove.toCol === 4)
+  ) {
+    tacticalBreakdown.push(
+      'En occupant le cœur du plateau (d4, d5, e4, e5), vous restreignez la mobilité des pièces adverses.'
+    );
+  }
+
+  const candidates = scoredMoves.slice(0, 3).map((entry, idx) => ({
+    rank: idx + 1,
+    label: formatMoveLabelFr(board, entry.move),
+    scoreCp: entry.score,
+    whiteScoreCp: color === COLORS.WHITE ? entry.score : -entry.score,
+    deltaCp: Math.max(0, bestScore - entry.score),
+    isBest: idx === 0,
+  }));
+
+  return {
+    objectiveTitle,
+    evalExplanation: describeEvaluationMeaning(
+      color === COLORS.WHITE ? bestScore : -bestScore,
+      color
+    ),
+    tacticalBreakdown: tacticalBreakdown.slice(0, 4),
+    candidates,
+    phaseGuide: getPhaseStrategyTips(phase),
+  };
+}
+
 function buildPedagogicalReason(state, move, bestScore, inCheckBefore, threatsBefore, phase) {
   const board = state.board;
   const moving = board[move.fromRow][move.fromCol];
@@ -881,27 +1064,35 @@ export async function analyzePositionForLearning(engine) {
 
   let bestMove = legal[0];
   let bestScore = -Infinity;
-  let alpha = -Infinity;
-  const beta = Infinity;
+  const scoredMoves = [];
 
   for (let i = 0; i < legal.length; i++) {
     const move = legal[i];
     const undo = makeMoveFast(state, move);
-    const score = -negamax(state, 2, -beta, -alpha, enemy, color, 3, 1);
+    const score = -negamax(state, 2, -Infinity, Infinity, enemy, color, 3, 1);
     unmakeMoveFast(state, move, undo);
 
+    scoredMoves.push({ move, score });
     if (score > bestScore) {
       bestScore = score;
       bestMove = move;
     }
-    if (score > alpha) {
-      alpha = score;
-    }
     if (i % 4 === 3) await yieldFrame();
   }
 
+  scoredMoves.sort((a, b) => b.score - a.score);
+
   const moveLabel = formatMoveLabelFr(state.board, bestMove);
   const reason = buildPedagogicalReason(state, bestMove, bestScore, inCheckBefore, threats, phase);
+  const details = buildDetailedAnalysis(
+    state,
+    bestMove,
+    bestScore,
+    inCheckBefore,
+    threats,
+    phase,
+    scoredMoves
+  );
 
   // Score relatif du point de vue des Blancs pour affichage clair
   const whiteAdvantageCp = color === COLORS.WHITE ? bestScore : -bestScore;
@@ -916,6 +1107,7 @@ export async function analyzePositionForLearning(engine) {
     whiteAdvantageCp,
     threats,
     inCheckBefore,
+    details,
   };
 }
 

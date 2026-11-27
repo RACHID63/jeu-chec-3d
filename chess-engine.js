@@ -146,6 +146,7 @@ export class ChessEngine {
         toCol: m.toCol,
       };
       if (m.promotion) entry.promotion = m.promotion;
+      if (m.redeemed) entry.redeemed = true;
       return entry;
     });
   }
@@ -163,6 +164,9 @@ export class ChessEngine {
         promotion: m.promotion || undefined,
       });
       if (!res) return false;
+      if (m.redeemed) {
+        probe.redeemLastCapture();
+      }
     }
 
     this.board = probe.board;
@@ -730,6 +734,34 @@ export class ChessEngine {
     this.lastMove = record;
     this.moveHistory.push(record);
     return record;
+  }
+
+  redeemLastCapture() {
+    if (this._snapshots.length === 0 || this.moveHistory.length === 0) return null;
+    const snap = this._snapshots[this._snapshots.length - 1];
+    const lastRecord = this.moveHistory[this.moveHistory.length - 1];
+    if (!lastRecord || !lastRecord.capturedPiece || lastRecord.redeemed) return null;
+
+    const currentKey = this._getPositionKey();
+    const count = this._positionCounts.get(currentKey) || 0;
+    if (count <= 1) this._positionCounts.delete(currentKey);
+    else this._positionCounts.set(currentKey, count - 1);
+
+    this.board = this.cloneBoard(snap.board);
+    this.castlingRights = { ...snap.castlingRights };
+    this.capturedByWhite = [...snap.capturedByWhite];
+    this.capturedByBlack = [...snap.capturedByBlack];
+    this.enPassantTarget = null;
+    this.halfMoveClock = snap.halfMoveClock + 1;
+    this.turn = oppositeColor(snap.turn);
+
+    lastRecord.redeemed = true;
+    lastRecord.san = `${lastRecord.san} (Racheté)`;
+    this.lastMove = lastRecord;
+
+    this._recordPosition();
+    this._updateStatus();
+    return lastRecord;
   }
 
   _buildSanNotationWithPreBoard(move, movingPiece, allSameColorMoves, isCheck, isMate) {

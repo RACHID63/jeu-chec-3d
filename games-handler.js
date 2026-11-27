@@ -70,17 +70,19 @@ const VALID_PRESETS = new Set(['iso', 'cinematic', 'top']);
 const VALID_PROMOS = new Set(['q', 'r', 'b', 'n']);
 const VALID_STATUSES = new Set(['playing', 'check', 'checkmate', 'stalemate', 'draw']);
 
+const VALID_PIECE_TYPES = new Set(['p', 'n', 'b', 'r', 'q']);
+
 /**
  * @param {any} rawMove
  */
 function sanitizeMove(rawMove) {
   if (!rawMove || typeof rawMove !== 'object') return null;
-  const { fromRow, fromCol, toRow, toCol, promotion } = rawMove;
+  const { fromRow, fromCol, toRow, toCol, promotion, redeemed } = rawMove;
   const coords = [fromRow, fromCol, toRow, toCol];
   if (coords.some((n) => !Number.isInteger(n) || n < 0 || n > 7)) {
     return null;
   }
-  /** @type {{ fromRow: number, fromCol: number, toRow: number, toCol: number, promotion?: string }} */
+  /** @type {{ fromRow: number, fromCol: number, toRow: number, toCol: number, promotion?: string, redeemed?: boolean }} */
   const clean = { fromRow, fromCol, toRow, toCol };
   if (promotion !== undefined && promotion !== null) {
     if (typeof promotion !== 'string' || !VALID_PROMOS.has(promotion)) {
@@ -88,7 +90,36 @@ function sanitizeMove(rawMove) {
     }
     clean.promotion = promotion;
   }
+  if (redeemed === true) {
+    clean.redeemed = true;
+  }
   return clean;
+}
+
+/**
+ * @param {any} rawSide
+ */
+function sanitizeQuizSide(rawSide) {
+  const s = rawSide && typeof rawSide === 'object' ? rawSide : {};
+  const asked = Number.isInteger(s.asked) && s.asked >= 0 && s.asked <= 500 ? s.asked : 0;
+  const correct = Number.isInteger(s.correct) && s.correct >= 0 && s.correct <= asked ? s.correct : 0;
+  const wrong = Number.isInteger(s.wrong) && s.wrong >= 0 && s.wrong <= asked ? s.wrong : 0;
+  const skipped = Number.isInteger(s.skipped) && s.skipped >= 0 && s.skipped <= 500 ? s.skipped : 0;
+  const recoveredPieces = Array.isArray(s.recoveredPieces)
+    ? s.recoveredPieces.filter((t) => typeof t === 'string' && VALID_PIECE_TYPES.has(t)).slice(0, 64)
+    : [];
+  return { asked, correct, wrong, skipped, recoveredPieces };
+}
+
+/**
+ * @param {any} rawStats
+ */
+function sanitizeQuizStats(rawStats) {
+  const obj = rawStats && typeof rawStats === 'object' ? rawStats : {};
+  return {
+    w: sanitizeQuizSide(obj.w),
+    b: sanitizeQuizSide(obj.b),
+  };
 }
 
 /**
@@ -118,6 +149,7 @@ function validateSavedGamePayload(body) {
   }
 
   const learningEnabled = Boolean(body.learningEnabled);
+  const quizEnabled = body.quizEnabled !== false;
   const cameraPreset = VALID_PRESETS.has(body.cameraPreset) ? body.cameraPreset : 'iso';
   const status = VALID_STATUSES.has(body.status) ? body.status : 'playing';
   const turn = VALID_COLORS.has(body.turn) ? body.turn : 'w';
@@ -142,6 +174,8 @@ function validateSavedGamePayload(body) {
       aiLevel,
       playerColor,
       learningEnabled,
+      quizEnabled,
+      quizStats: sanitizeQuizStats(body.quizStats),
       cameraPreset,
       status,
       turn,
@@ -162,6 +196,8 @@ function toPublicGame(g) {
     aiLevel: g.aiLevel,
     playerColor: g.playerColor,
     learningEnabled: Boolean(g.learningEnabled),
+    quizEnabled: g.quizEnabled !== false,
+    quizStats: sanitizeQuizStats(g.quizStats),
     cameraPreset: g.cameraPreset || 'iso',
     status: g.status || 'playing',
     turn: g.turn || 'w',

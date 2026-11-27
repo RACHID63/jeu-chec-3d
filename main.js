@@ -15,6 +15,7 @@ import {
   analyzePositionForLearning,
   evaluatePlayedMoveQuality,
   findBestAIMove,
+  getPhaseStrategyTips,
 } from './chess-ai.js';
 import {
   BOARD_TOP_Y,
@@ -29,6 +30,14 @@ import { ShatterFXManager } from './shatter-fx.js';
 import { VoiceChessController } from './voice-control.js';
 import { TUTORIAL_COMPLETED_STATE, TUTORIAL_STEPS } from './tutorial.js';
 import { BEGINNER_BASICS, PIECE_GUIDE_DATA, createPieceDiagramSvg } from './beginner-guide.js';
+import {
+  PIECE_POINTS,
+  PIECE_SHORT_NAMES,
+  QUIZ_THEMES,
+  advanceQuizConnection,
+  getThemeMeta,
+  pickQuizQuestion,
+} from './quiz-bank.js';
 
 // ============================================================================
 // 1. AUDIO PROCÉDURAL DE MUSÉE (WEB AUDIO API, ZÉRO FICHIER EXTERNE)
@@ -131,10 +140,35 @@ const gameConfig = {
   mode: 'ai', // 'ai' | 'learning' | 'pvp'
   aiLevel: 2, // 1 | 2 | 3
   playerColor: COLORS.WHITE, // 'w' | 'b'
+  quizEnabled: true,
 };
 
 function isVsAIMode(mode = gameConfig.mode) {
   return mode === 'ai' || mode === 'learning';
+}
+
+function createEmptyQuizStats() {
+  return {
+    w: { asked: 0, correct: 0, wrong: 0, skipped: 0, recoveredPieces: [] },
+    b: { asked: 0, correct: 0, wrong: 0, skipped: 0, recoveredPieces: [] },
+  };
+}
+
+function normalizeQuizStats(rawStats) {
+  const fresh = createEmptyQuizStats();
+  if (!rawStats || typeof rawStats !== 'object') return fresh;
+  for (const side of ['w', 'b']) {
+    const src = rawStats[side];
+    if (!src || typeof src !== 'object') continue;
+    fresh[side].asked = Number.isFinite(Number(src.asked)) ? Math.max(0, Number(src.asked)) : 0;
+    fresh[side].correct = Number.isFinite(Number(src.correct)) ? Math.max(0, Number(src.correct)) : 0;
+    fresh[side].wrong = Number.isFinite(Number(src.wrong)) ? Math.max(0, Number(src.wrong)) : 0;
+    fresh[side].skipped = Number.isFinite(Number(src.skipped)) ? Math.max(0, Number(src.skipped)) : 0;
+    fresh[side].recoveredPieces = Array.isArray(src.recoveredPieces)
+      ? src.recoveredPieces.filter((t) => ['p', 'n', 'b', 'r', 'q'].includes(t))
+      : [];
+  }
+  return fresh;
 }
 
 // État de la sélection et des tours
@@ -143,6 +177,17 @@ let legalMovesForSelected = [];
 let isAiThinking = false;
 let aiSessionToken = 0;
 let pendingPromotion = null; // { fromRow, fromCol, toRow, toCol }
+let pendingCaptureQuiz = null; // { record, victimColor, currentQuestion, answered, wasCorrect }
+let quizStats = createEmptyQuizStats();
+const usedQuizQuestionIds = new Set();
+advanceQuizConnection();
+
+function beginNewQuizGameSession() {
+  if (engine.moveHistory.length > 0 || usedQuizQuestionIds.size > 0) {
+    advanceQuizConnection();
+  }
+  usedQuizQuestionIds.clear();
+}
 
 // État du Mode Apprentissage
 let learningEnabled = false;
@@ -672,18 +717,55 @@ let activeCameraPreset = 'iso';
 let cameraTransition = null; // { targetPos: Vector3, targetLook: Vector3, allowTopPolar: boolean }
 let lastViewportAspect = window.innerWidth / Math.max(1, window.innerHeight);
 
-const CAMERA_STYLE_ORDER = ['iso', 'cinematic', 'top'];
+const CAMERA_STYLE_ORDER = ['iso', 'top', 'cinematic'];
 const CAMERA_STYLE_LABELS = {
   iso: 'Vision : 3D',
-  cinematic: 'Vision : Cinématique',
   top: 'Vision : 2D',
+  cinematic: 'Vision : Cinématique',
 };
 const btnCameraStyle = document.getElementById('btn-camera-style');
 const cameraStyleLabelEl = document.getElementById('camera-style-label');
+const cameraViewToastEl = document.getElementById('camera-view-toast');
+const cameraViewToastTextEl = document.getElementById('camera-view-toast-text');
+let cameraToastTimer = 0;
+
+function showCameraViewToast(label) {
+  if (!cameraViewToastEl || !cameraViewToastTextEl) return;
+  window.clearTimeout(cameraToastTimer);
+  cameraViewToastTextEl.textContent = label;
+  cameraViewToastEl.classList.remove('hidden');
+  cameraToastTimer = window.setTimeout(() => {
+    cameraViewToastEl.classList.add('hidden');
+  }, 1500);
+}
+
+function cycleCameraPreset({ showToast = false } = {}) {
+  const idx = CAMERA_STYLE_ORDER.indexOf(activeCameraPreset);
+  const nextPreset = CAMERA_STYLE_ORDER[(idx + 1) % CAMERA_STYLE_ORDER.length];
+  setCameraPreset(nextPreset, false);
+  if (showToast) {
+    showCameraViewToast(CAMERA_STYLE_LABELS[nextPreset] || 'Vision : 3D');
+  }
+}
 
 // Emprise complète du jeu incluant le socle/cadre extérieur en marbre (±5.05) + marge visuelle
 const BOARD_FRAME_HALF_EXTENT = 5.3;
 const BOARD_FRAME_MAX_Y = 1.55;
+
+function isSmartphoneLandscape() {
+  return (
+    window.innerWidth > window.innerHeight &&
+    (window.innerWidth <= 960 || window.innerHeight <= 540)
+  );
+}
+
+function isSmartphoneViewport() {
+  return window.innerWidth <= 900 || isSmartphoneLandscape();
+}
+
+function isSmartphonePortrait() {
+  return isSmartphoneViewport() && !isSmartphoneLandscape();
+}
 
 function fitCameraPoseToBoardFrame(basePos, look) {
   const aspect = Math.max(0.35, window.innerWidth / Math.max(1, window.innerHeight));
@@ -692,11 +774,27 @@ function fitCameraPoseToBoardFrame(basePos, look) {
   const tanH = tanV * aspect;
 
   const isMenusHidden = document.querySelector('.hud-layer')?.classList.contains('is-menus-hidden');
-  const clearVertRatio = isMenusHidden
-    ? 0.92
-    : Math.max(0.68, (window.innerHeight - 148) / Math.max(320, window.innerHeight));
-  const fillX = 0.9;
-  const fillY = clearVertRatio * 0.92;
+  let fillX = 0.9;
+  let fillY = 0.92;
+
+  if (isSmartphoneLandscape()) {
+    const panelWidth = learningEnabled ? Math.min(176, window.innerWidth * 0.26) + 18 : 0;
+    const clearHorizRatio = !isMenusHidden
+      ? Math.max(0.42, (window.innerWidth - 336) / Math.max(360, window.innerWidth))
+      : learningEnabled
+      ? Math.max(0.54, (window.innerWidth - panelWidth) / Math.max(360, window.innerWidth))
+      : 0.94;
+    fillX = clearHorizRatio * 0.93;
+    fillY = 0.92 * 0.94;
+  } else {
+    const clearVertRatio = isMenusHidden
+      ? isSmartphonePortrait() && learningEnabled
+        ? Math.max(0.76, (window.innerHeight - 135) / Math.max(320, window.innerHeight))
+        : 0.92
+      : Math.max(0.68, (window.innerHeight - 148) / Math.max(320, window.innerHeight));
+    fillX = 0.9;
+    fillY = clearVertRatio * 0.92;
+  }
 
   const offset = basePos.clone().sub(look);
   const baseDist = offset.length();
@@ -917,6 +1015,22 @@ async function executeMoveVisualAndEngine(move) {
     persistAutoSaveIfNeeded();
   }
 
+  if (shouldTriggerCaptureQuiz(record)) {
+    pendingCaptureQuiz = {
+      record,
+      victimColor: record.capturedPiece.color,
+      currentQuestion: null,
+      answered: false,
+      wasCorrect: false,
+    };
+    window.setTimeout(() => {
+      if (pendingCaptureQuiz && pendingCaptureQuiz.record === record) {
+        openCaptureQuizModal();
+      }
+    }, 460);
+    return;
+  }
+
   if (engine.status === 'checkmate' || engine.status === 'stalemate' || engine.status === 'draw') {
     refreshLearningAdvice();
     setTimeout(() => showGameOverModal(), 620);
@@ -932,6 +1046,7 @@ async function executeMoveVisualAndEngine(move) {
 
 async function maybeTriggerAIMove() {
   if (!isVsAIMode()) return;
+  if (pendingCaptureQuiz) return;
   if (engine.turn === gameConfig.playerColor) return;
   if (engine.status === 'checkmate' || engine.status === 'stalemate' || engine.status === 'draw') return;
 
@@ -996,7 +1111,7 @@ function getClickedSquareFromRay(clientX, clientY) {
 }
 
 function isHumanTurn() {
-  if (isAiThinking || pendingPromotion) return false;
+  if (isAiThinking || pendingPromotion || pendingCaptureQuiz) return false;
   if (engine.status === 'checkmate' || engine.status === 'stalemate' || engine.status === 'draw') {
     return false;
   }
@@ -1149,19 +1264,56 @@ function hideSquareHover() {
 
 if (renderer) {
   const domEl = renderer.domElement;
+  const activeCanvasPointers = new Set();
+  let gestureHadMultiTouch = false;
+  let pointerDownTime = 0;
 
   domEl.addEventListener('pointerdown', (e) => {
+    activeCanvasPointers.add(e.pointerId);
+    if (activeCanvasPointers.size > 1) {
+      gestureHadMultiTouch = true;
+    } else {
+      gestureHadMultiTouch = false;
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+      pointerDownTime = performance.now();
+    }
     isPointerDragging = true;
-    pointerDownPos = { x: e.clientX, y: e.clientY };
     hideSquareHover();
   });
 
   domEl.addEventListener('pointerup', (e) => {
-    isPointerDragging = false;
+    activeCanvasPointers.delete(e.pointerId);
+    const wasMultiTouch = gestureHadMultiTouch;
+    if (activeCanvasPointers.size === 0) {
+      isPointerDragging = false;
+      gestureHadMultiTouch = false;
+    }
+    if (wasMultiTouch || activeCanvasPointers.size > 0) return;
+
     const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
-    if (dist > 6) return; // L'utilisateur a fait pivoter la caméra
+    const elapsed = performance.now() - pointerDownTime;
+    if (dist > 10 || elapsed > 450) return; // L'utilisateur a fait pivoter la caméra
+
     const sq = getClickedSquareFromRay(e.clientX, e.clientY);
+    const hadSelectedPiece = Boolean(selectedSquare);
     handleSquareClick(sq);
+
+    if (
+      !sq &&
+      !hadSelectedPiece &&
+      isSmartphoneViewport() &&
+      !document.querySelector('.modal-backdrop:not(.hidden)')
+    ) {
+      cycleCameraPreset({ showToast: true });
+    }
+  });
+
+  domEl.addEventListener('pointercancel', (e) => {
+    activeCanvasPointers.delete(e.pointerId);
+    if (activeCanvasPointers.size === 0) {
+      isPointerDragging = false;
+      gestureHadMultiTouch = false;
+    }
   });
 
   domEl.addEventListener('pointerleave', () => {
@@ -1322,6 +1474,7 @@ function updateHUD() {
     btnLearning.classList.toggle('is-active', learningEnabled);
     btnLearning.setAttribute('aria-pressed', String(learningEnabled));
   }
+  syncLearningPanelLayout();
 }
 
 // --- Panneau Mode Apprentissage & Conseils ---
@@ -1431,14 +1584,72 @@ async function refreshLearningAdvice() {
   }
 }
 
+let autoHidMenusForLearning = false;
+let lastIsLandscapeLayout = isSmartphoneLandscape();
+
+function resetLearningPanelPosition() {
+  if (!learningPanelEl) return;
+  learningPanelEl.classList.remove('is-positioned', 'is-dragging');
+  learningPanelEl.style.left = '';
+  learningPanelEl.style.top = '';
+  learningPanelEl.style.right = '';
+  learningPanelEl.style.bottom = '';
+}
+
+function syncLearningPanelLayout() {
+  const hudLayer = document.querySelector('.hud-layer');
+  const hudTop = document.querySelector('.hud-top');
+  const nowLandscape = isSmartphoneLandscape();
+
+  if (nowLandscape !== lastIsLandscapeLayout) {
+    lastIsLandscapeLayout = nowLandscape;
+    resetLearningPanelPosition();
+  }
+
+  if (hudLayer && hudTop && !nowLandscape) {
+    const topRect = hudTop.getBoundingClientRect();
+    if (topRect.height > 0) {
+      const offset = Math.max(76, Math.round(topRect.bottom + 8));
+      /** @type {HTMLElement} */ (hudLayer).style.setProperty(
+        '--learning-top-offset',
+        `${offset}px`
+      );
+    }
+  }
+}
+
+function enterMobileLearningMode() {
+  resetLearningPanelPosition();
+  if (!menusHidden) {
+    autoHidMenusForLearning = true;
+    setMenusHidden(true);
+  }
+  if (isSmartphoneLandscape() && !getFullscreenElement()) {
+    try {
+      const root = /** @type {any} */ (document.documentElement);
+      if (root.requestFullscreen) {
+        root.requestFullscreen().catch(() => {});
+      } else if (root.webkitRequestFullscreen) {
+        root.webkitRequestFullscreen();
+      }
+    } catch (_) {}
+  }
+}
+
 function setLearningEnabled(enabled) {
   learningEnabled = enabled;
   learningPanelEl.classList.toggle('hidden', !enabled);
+  learningPanelEl.classList.toggle('is-tutorial-active', Boolean(tutorialActive));
+
   if (!enabled) {
     learningSessionToken++;
     clear3DHintArrow();
     updatePieceTipUI(null);
     stopInteractiveTutorial();
+    if (autoHidMenusForLearning) {
+      autoHidMenusForLearning = false;
+      setMenusHidden(false);
+    }
   } else {
     if (selectedSquare) {
       const p = engine.getPiece(selectedSquare.row, selectedSquare.col);
@@ -1447,10 +1658,18 @@ function setLearningEnabled(enabled) {
     refreshLearningAdvice();
   }
   updateHUD();
+  syncLearningPanelLayout();
+  if (isSmartphoneViewport()) {
+    setCameraPreset(activeCameraPreset, false);
+  }
 }
 
 document.getElementById('btn-learning').addEventListener('click', () => {
-  setLearningEnabled(!learningEnabled);
+  const nextEnabled = !learningEnabled;
+  if (nextEnabled && isSmartphoneViewport()) {
+    enterMobileLearningMode();
+  }
+  setLearningEnabled(nextEnabled);
 });
 
 document.getElementById('btn-learning-close').addEventListener('click', () => {
@@ -1470,6 +1689,150 @@ document.getElementById('btn-show-hint').addEventListener('click', async () => {
 
 document.getElementById('btn-hide-hint').addEventListener('click', () => {
   clear3DHintArrow();
+});
+
+async function openCoachInfoModal() {
+  const phaseEl = document.getElementById('coach-info-phase');
+  const evalBadgeEl = document.getElementById('coach-info-eval-badge');
+  const moveEl = document.getElementById('coach-info-move');
+  const objectiveEl = document.getElementById('coach-info-objective');
+  const evalDescEl = document.getElementById('coach-info-eval-desc');
+  const reasonsBlockEl = document.getElementById('coach-info-reasons-block');
+  const reasonsListEl = document.getElementById('coach-info-reasons-list');
+  const candidatesBlockEl = document.getElementById('coach-info-candidates-block');
+  const candidatesListEl = document.getElementById('coach-info-candidates-list');
+  const threatsTextEl = document.getElementById('coach-info-threats-text');
+  const phaseTitleEl = document.getElementById('coach-info-phase-title');
+  const phaseTipsEl = document.getElementById('coach-info-phase-tips');
+  const show3dBtn = document.getElementById('btn-coach-info-show-3d');
+
+  if (!currentLearningAnalysis && isHumanTurn() && engine.status !== 'checkmate' && engine.status !== 'stalemate' && engine.status !== 'draw') {
+    await refreshLearningAdvice();
+  }
+
+  const analysis = currentLearningAnalysis;
+  const fallbackPhase = engine.fullMoveNumber <= 8 ? 'Ouverture' : 'Milieu de jeu';
+  const activePhase = analysis?.phase || fallbackPhase;
+  const phaseGuide = analysis?.details?.phaseGuide || getPhaseStrategyTips(activePhase);
+
+  if (phaseEl) phaseEl.textContent = activePhase;
+  if (phaseTitleEl) phaseTitleEl.textContent = phaseGuide.title;
+  if (phaseTipsEl) {
+    phaseTipsEl.replaceChildren();
+    for (const tip of phaseGuide.tips) {
+      const li = document.createElement('li');
+      li.textContent = tip;
+      phaseTipsEl.appendChild(li);
+    }
+  }
+
+  if (analysis && analysis.details) {
+    const { details } = analysis;
+    if (evalBadgeEl) {
+      evalBadgeEl.textContent =
+        Math.abs(analysis.whiteAdvantageCp) > 50000
+          ? 'Mat'
+          : `${analysis.whiteAdvantageCp >= 0 ? '+' : ''}${(analysis.whiteAdvantageCp / 100).toFixed(1)}`;
+    }
+    if (moveEl) moveEl.textContent = `Coup conseillé : ${analysis.moveLabel}`;
+    if (objectiveEl) objectiveEl.textContent = `Objectif : ${details.objectiveTitle}`;
+    if (evalDescEl) evalDescEl.textContent = details.evalExplanation;
+
+    if (reasonsBlockEl && reasonsListEl) {
+      reasonsBlockEl.classList.remove('hidden');
+      reasonsListEl.replaceChildren();
+      for (const item of details.tacticalBreakdown) {
+        const li = document.createElement('li');
+        li.textContent = item;
+        reasonsListEl.appendChild(li);
+      }
+    }
+
+    if (candidatesBlockEl && candidatesListEl) {
+      candidatesBlockEl.classList.remove('hidden');
+      candidatesListEl.replaceChildren();
+      for (const cand of details.candidates) {
+        const row = document.createElement('div');
+        row.className = `coach-candidate-row${cand.isBest ? ' is-best' : ''}`;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'coach-candidate-name';
+        nameSpan.textContent = `${cand.rank}. ${cand.label}`;
+
+        const scoreSpan = document.createElement('span');
+        scoreSpan.className = 'coach-candidate-score';
+        if (Math.abs(cand.whiteScoreCp) > 50000) {
+          scoreSpan.textContent = 'Mat';
+        } else {
+          const valStr = `${cand.whiteScoreCp >= 0 ? '+' : ''}${(cand.whiteScoreCp / 100).toFixed(1)}`;
+          scoreSpan.textContent = cand.isBest
+            ? `${valStr} · Optimal`
+            : `${valStr} (-${(cand.deltaCp / 100).toFixed(1)})`;
+        }
+
+        row.append(nameSpan, scoreSpan);
+        candidatesListEl.appendChild(row);
+      }
+    }
+
+    if (threatsTextEl) {
+      if (analysis.inCheckBefore) {
+        threatsTextEl.textContent =
+          'Alerte Échec : votre Empereur est directement menacé. Le coup recommandé répond en priorité à cette menace.';
+      } else if (analysis.threats.length > 0) {
+        const items = analysis.threats.slice(0, 3).map((t) => {
+          const pName = SHORT_PIECE_LABEL[t.type] || 'Pièce';
+          return `${pName} en ${t.sq} (${t.defended ? 'défendu' : 'non défendu !'})`;
+        });
+        threatsTextEl.textContent = `Pièce(s) sous pression : ${items.join(' · ')}.`;
+      } else {
+        threatsTextEl.textContent =
+          'Aucune pièce majeure alliée n’est actuellement exposée sans défense. Vous pouvez développer votre plan librement.';
+      }
+    }
+
+    if (show3dBtn) {
+      show3dBtn.classList.toggle('hidden', !isHumanTurn());
+    }
+  } else {
+    if (evalBadgeEl) evalBadgeEl.textContent = learningEvalScoreEl?.textContent || '0.0';
+    if (moveEl) {
+      moveEl.textContent =
+        engine.status === 'checkmate' || engine.status === 'stalemate' || engine.status === 'draw'
+          ? 'Partie terminée'
+          : 'En attente du coup de l’adversaire';
+    }
+    if (objectiveEl) objectiveEl.textContent = 'Lecture stratégique de la position';
+    if (evalDescEl) {
+      evalDescEl.textContent =
+        'L’évaluation mesure l’avantage matériel et positionnel en équivalent pions (+ positif pour le Marbre, - négatif pour le Bronze).';
+    }
+    reasonsBlockEl?.classList.add('hidden');
+    candidatesBlockEl?.classList.add('hidden');
+    if (threatsTextEl) {
+      threatsTextEl.textContent =
+        'Vérifiez toujours avant de jouer si une de vos pièces de valeur (Dame, Tour, Fou, Cavalier) vient d’être attaquée.';
+    }
+    show3dBtn?.classList.add('hidden');
+  }
+
+  openModal('modal-coach-info');
+}
+
+document.getElementById('btn-coach-more-info')?.addEventListener('click', () => {
+  openCoachInfoModal();
+});
+
+document.getElementById('btn-coach-info-show-3d')?.addEventListener('click', async () => {
+  closeModal('modal-coach-info');
+  if (!learningEnabled) setLearningEnabled(true);
+  if (!isHumanTurn()) return;
+  if (!currentLearningAnalysis) {
+    await refreshLearningAdvice();
+  }
+  if (currentLearningAnalysis?.bestMove) {
+    show3DHintArrow(currentLearningAnalysis.bestMove);
+  }
 });
 
 // --- Tutoriel Interactif (surbrillance HUD + guide dans le panneau Apprentissage) ---
@@ -1636,6 +1999,7 @@ function stopInteractiveTutorial() {
   tutorialActive = false;
   tutorialWaitingForAi = false;
   tutorialCompleted = false;
+  learningPanelEl?.classList.remove('is-tutorial-active');
   tutorialBoxEl?.classList.add('hidden');
   hideTutorialSpotlight();
 }
@@ -1648,6 +2012,10 @@ function startInteractiveTutorial() {
   aiSessionToken++;
   isAiThinking = false;
   pendingPromotion = null;
+  pendingCaptureQuiz = null;
+  closeModal('modal-capture-quiz');
+  beginNewQuizGameSession();
+  quizStats = createEmptyQuizStats();
   selectedSquare = null;
   legalMovesForSelected = [];
   clear3DHintArrow();
@@ -1664,6 +2032,9 @@ function startInteractiveTutorial() {
   tutorialCompleted = false;
 
   closeModal('modal-new-game');
+  if (isSmartphoneViewport()) {
+    enterMobileLearningMode();
+  }
   setLearningEnabled(true);
   updateHUD();
   renderTutorialStep();
@@ -1693,7 +2064,7 @@ document.getElementById('btn-start-tutorial')?.addEventListener('click', () => {
   startInteractiveTutorial();
 });
 
-// Déplacement libre du panneau d'apprentissage à la souris / tactile
+// Déplacement libre du panneau d'apprentissage à la souris / au doigt sur smartphone
 const learningHeaderEl = document.getElementById('learning-panel-header');
 if (learningPanelEl && learningHeaderEl) {
   let dragState = null;
@@ -1708,9 +2079,21 @@ if (learningPanelEl && learningHeaderEl) {
     };
   };
 
-  learningHeaderEl.addEventListener('pointerdown', (e) => {
+  const startPanelDrag = (e) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
-    if (e.target instanceof Element && e.target.closest('button')) return;
+    if (e.target instanceof Element) {
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      if (
+        tutorialActive &&
+        e.target.closest('.learning-body') &&
+        !e.target.closest('.learning-header')
+      ) {
+        return;
+      }
+      if (!isSmartphoneViewport() && !e.target.closest('.learning-header')) {
+        return;
+      }
+    }
 
     const rect = learningPanelEl.getBoundingClientRect();
     learningPanelEl.classList.add('is-positioned', 'is-dragging');
@@ -1726,11 +2109,14 @@ if (learningPanelEl && learningHeaderEl) {
       originLeft: rect.left,
       originTop: rect.top,
     };
-    learningHeaderEl.setPointerCapture?.(e.pointerId);
+    learningPanelEl.setPointerCapture?.(e.pointerId);
+    e.stopPropagation();
     e.preventDefault();
-  });
+  };
 
-  learningHeaderEl.addEventListener('pointermove', (e) => {
+  learningPanelEl.addEventListener('pointerdown', startPanelDrag);
+
+  learningPanelEl.addEventListener('pointermove', (e) => {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
     const rawLeft = dragState.originLeft + (e.clientX - dragState.startX);
     const rawTop = dragState.originTop + (e.clientY - dragState.startY);
@@ -1745,10 +2131,11 @@ if (learningPanelEl && learningHeaderEl) {
     learningPanelEl.classList.remove('is-dragging');
   };
 
-  learningHeaderEl.addEventListener('pointerup', endPanelDrag);
-  learningHeaderEl.addEventListener('pointercancel', endPanelDrag);
+  learningPanelEl.addEventListener('pointerup', endPanelDrag);
+  learningPanelEl.addEventListener('pointercancel', endPanelDrag);
 
   window.addEventListener('resize', () => {
+    syncLearningPanelLayout();
     if (!learningPanelEl.classList.contains('is-positioned')) return;
     if (learningPanelEl.classList.contains('hidden')) return;
     const rect = learningPanelEl.getBoundingClientRect();
@@ -1899,7 +2286,11 @@ document.querySelectorAll('[data-close-modal]').forEach((btn) => {
 
 document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
   backdrop.addEventListener('click', (e) => {
-    if (e.target === backdrop && backdrop.id !== 'modal-promotion') {
+    if (
+      e.target === backdrop &&
+      backdrop.id !== 'modal-promotion' &&
+      backdrop.id !== 'modal-capture-quiz'
+    ) {
       closeModal(backdrop.id);
     }
   });
@@ -1907,9 +2298,7 @@ document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
 
 // --- Bouton vision caméra (menu horizontal du bas) ---
 btnCameraStyle?.addEventListener('click', () => {
-  const idx = CAMERA_STYLE_ORDER.indexOf(activeCameraPreset);
-  const nextPreset = CAMERA_STYLE_ORDER[(idx + 1) % CAMERA_STYLE_ORDER.length];
-  setCameraPreset(nextPreset, false);
+  cycleCameraPreset({ showToast: isSmartphoneViewport() });
 });
 
 // --- Bouton Plein écran (API Fullscreen native) ---
@@ -2017,18 +2406,20 @@ function setMenusHidden(hidden) {
   }
   menusIconHideEl?.classList.toggle('hidden', menusHidden);
   menusIconShowEl?.classList.toggle('hidden', !menusHidden);
-  if (getFullscreenElement()) {
+  if (getFullscreenElement() || isSmartphoneViewport()) {
     setCameraPreset(activeCameraPreset, false);
   }
+  syncLearningPanelLayout();
 }
 
 btnToggleMenus?.addEventListener('click', () => {
+  autoHidMenusForLearning = false;
   setMenusHidden(!menusHidden);
 });
 
 // --- Bouton Annuler ---
 btnUndo.addEventListener('click', () => {
-  if (isAiThinking || pendingPromotion) return;
+  if (isAiThinking || pendingPromotion || pendingCaptureQuiz) return;
   if (isVsAIMode()) {
     if (engine.turn === gameConfig.playerColor && engine.moveHistory.length >= 2) {
       engine.undo();
@@ -2107,7 +2498,370 @@ document.querySelectorAll('.promo-choice').forEach((btn) => {
   });
 });
 
+// --- Défi de Rachat par Question (lorsqu'une pièce est capturée) ---
+const quizModalKickerEl = document.getElementById('quiz-modal-kicker');
+const quizVictimSwatchEl = document.getElementById('quiz-victim-swatch');
+const quizPieceTitleEl = document.getElementById('quiz-piece-title');
+const quizPieceSubEl = document.getElementById('quiz-piece-sub');
+const quizStepThemeEl = document.getElementById('quiz-step-theme');
+const quizThemeGridEl = document.getElementById('quiz-theme-grid');
+const quizStepQuestionEl = document.getElementById('quiz-step-question');
+const quizActiveThemeBadgeEl = document.getElementById('quiz-active-theme-badge');
+const btnQuizChangeTheme = document.getElementById('btn-quiz-change-theme');
+const quizQuestionTextEl = document.getElementById('quiz-question-text');
+const quizChoicesListEl = document.getElementById('quiz-choices-list');
+const quizAnswerFeedbackEl = document.getElementById('quiz-answer-feedback');
+const quizFeedbackTitleEl = document.getElementById('quiz-feedback-title');
+const quizFeedbackExplanationEl = document.getElementById('quiz-feedback-explanation');
+const btnQuizForfeit = document.getElementById('btn-quiz-forfeit');
+const btnQuizContinue = document.getElementById('btn-quiz-continue');
+
+function shouldTriggerCaptureQuiz(record) {
+  if (!gameConfig.quizEnabled || tutorialActive) return false;
+  if (!record || !record.capturedPiece) return false;
+  if (isVsAIMode() && record.capturedPiece.color !== gameConfig.playerColor) return false;
+  return true;
+}
+
+function renderQuizThemeGrid() {
+  if (!quizThemeGridEl) return;
+  quizThemeGridEl.replaceChildren();
+  for (const theme of QUIZ_THEMES) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'quiz-theme-btn';
+
+    const head = document.createElement('span');
+    head.className = 'quiz-theme-head';
+    head.textContent = `${theme.icon} ${theme.label}`;
+
+    const desc = document.createElement('span');
+    desc.className = 'quiz-theme-desc';
+    desc.textContent = theme.desc;
+
+    btn.append(head, desc);
+    btn.addEventListener('click', () => {
+      startQuizQuestionForTheme(theme.id);
+    });
+    quizThemeGridEl.appendChild(btn);
+  }
+}
+
+function openCaptureQuizModal() {
+  if (!pendingCaptureQuiz) return;
+  const { record, victimColor } = pendingCaptureQuiz;
+  const pieceType = record.capturedPiece?.type || 'p';
+  const pieceName = PIECE_SHORT_NAMES[pieceType] || 'Pièce';
+  const pts = PIECE_POINTS[pieceType] ?? 1;
+  const sideLabel = victimColor === COLORS.WHITE ? 'Blancs (Marbre)' : 'Noirs (Bronze)';
+
+  if (quizModalKickerEl) {
+    quizModalKickerEl.textContent = `Défi de Rachat · ${sideLabel}`;
+  }
+  if (quizVictimSwatchEl) {
+    quizVictimSwatchEl.className = `material-swatch ${
+      victimColor === COLORS.WHITE ? 'swatch-white' : 'swatch-black'
+    }`;
+  }
+  if (quizPieceTitleEl) {
+    const sqAlg = record.capturedPos
+      ? squareToAlgebraic(record.capturedPos.row, record.capturedPos.col).toUpperCase()
+      : '';
+    quizPieceTitleEl.textContent = `Votre ${pieceName}${sqAlg ? ` (${sqAlg})` : ''} vient d'être capturé — ${pts} pt${pts > 1 ? 's' : ''}`;
+  }
+  if (quizPieceSubEl) {
+    quizPieceSubEl.textContent =
+      'Répondez juste pour que votre pièce vous soit rendue et repousser l’adversaire.';
+  }
+
+  quizStepThemeEl?.classList.remove('hidden');
+  quizStepQuestionEl?.classList.add('hidden');
+  quizAnswerFeedbackEl?.classList.add('hidden');
+  quizAnswerFeedbackEl?.classList.remove('is-success', 'is-error');
+  btnQuizContinue?.classList.add('hidden');
+  btnQuizForfeit?.classList.remove('hidden');
+
+  renderQuizThemeGrid();
+  openModal('modal-capture-quiz');
+}
+
+function startQuizQuestionForTheme(themeId) {
+  if (!pendingCaptureQuiz) return;
+  const question = pickQuizQuestion(themeId, usedQuizQuestionIds);
+  pendingCaptureQuiz.currentQuestion = question;
+  pendingCaptureQuiz.answered = false;
+  pendingCaptureQuiz.wasCorrect = false;
+
+  const chosenMeta = getThemeMeta(themeId);
+  const actualMeta = getThemeMeta(question.theme);
+  if (quizActiveThemeBadgeEl) {
+    quizActiveThemeBadgeEl.textContent =
+      themeId === 'aleatoire'
+        ? `${chosenMeta.icon} Aléatoire · ${actualMeta.label}`
+        : `${actualMeta.icon} ${actualMeta.label}`;
+  }
+
+  quizStepThemeEl?.classList.add('hidden');
+  quizStepQuestionEl?.classList.remove('hidden');
+  btnQuizChangeTheme?.classList.remove('hidden');
+  quizAnswerFeedbackEl?.classList.add('hidden');
+  quizAnswerFeedbackEl?.classList.remove('is-success', 'is-error');
+  btnQuizContinue?.classList.add('hidden');
+  btnQuizForfeit?.classList.remove('hidden');
+
+  if (quizQuestionTextEl) {
+    quizQuestionTextEl.textContent = question.question;
+  }
+
+  if (quizChoicesListEl) {
+    quizChoicesListEl.replaceChildren();
+    const letters = ['A', 'B', 'C', 'D'];
+    question.choices.forEach((choiceText, idx) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'quiz-choice-btn';
+      btn.dataset.choiceIndex = String(idx);
+
+      const letterEl = document.createElement('span');
+      letterEl.className = 'quiz-choice-letter';
+      letterEl.textContent = letters[idx] || String(idx + 1);
+
+      const textEl = document.createElement('span');
+      textEl.textContent = choiceText;
+
+      btn.append(letterEl, textEl);
+      btn.addEventListener('click', () => handleQuizAnswerSelected(idx));
+      quizChoicesListEl.appendChild(btn);
+    });
+  }
+}
+
+function handleQuizAnswerSelected(selectedIdx) {
+  if (!pendingCaptureQuiz || pendingCaptureQuiz.answered || !pendingCaptureQuiz.currentQuestion) {
+    return;
+  }
+  const q = pendingCaptureQuiz.currentQuestion;
+  const isCorrect = selectedIdx === q.answerIndex;
+  pendingCaptureQuiz.answered = true;
+  pendingCaptureQuiz.wasCorrect = isCorrect;
+
+  const sideStats = quizStats[pendingCaptureQuiz.victimColor];
+  if (sideStats) {
+    sideStats.asked += 1;
+    if (isCorrect) sideStats.correct += 1;
+    else sideStats.wrong += 1;
+  }
+
+  quizChoicesListEl?.querySelectorAll('.quiz-choice-btn').forEach((el) => {
+    const btn = /** @type {HTMLButtonElement} */ (el);
+    btn.disabled = true;
+    const idx = Number(btn.dataset.choiceIndex);
+    if (idx === q.answerIndex) {
+      btn.classList.add('is-correct');
+    } else if (idx === selectedIdx && !isCorrect) {
+      btn.classList.add('is-wrong');
+    }
+  });
+
+  btnQuizChangeTheme?.classList.add('hidden');
+  btnQuizForfeit?.classList.add('hidden');
+
+  const pieceName = PIECE_SHORT_NAMES[pendingCaptureQuiz.record.capturedPiece?.type || 'p'] || 'Pièce';
+
+  if (quizAnswerFeedbackEl && quizFeedbackTitleEl && quizFeedbackExplanationEl) {
+    quizAnswerFeedbackEl.classList.remove('hidden', 'is-success', 'is-error');
+    quizAnswerFeedbackEl.classList.add(isCorrect ? 'is-success' : 'is-error');
+    quizFeedbackTitleEl.textContent = isCorrect
+      ? `Bonne réponse ! Votre ${pieceName} vous est rendu !`
+      : `Mauvaise réponse ! Votre ${pieceName} reste perdu.`;
+    quizFeedbackExplanationEl.textContent = q.explanation || '';
+  }
+
+  if (btnQuizContinue) {
+    btnQuizContinue.textContent = isCorrect ? 'Reprendre ma pièce' : 'Continuer la partie';
+    btnQuizContinue.classList.remove('hidden');
+  }
+
+  if (isCorrect) {
+    audio.playMove(true);
+  }
+}
+
+function finalizeCaptureQuiz() {
+  if (!pendingCaptureQuiz) return;
+  const quiz = pendingCaptureQuiz;
+  pendingCaptureQuiz = null;
+  closeModal('modal-capture-quiz');
+
+  if (quiz.wasCorrect) {
+    const redeemed = engine.redeemLastCapture();
+    if (redeemed && quiz.record.capturedPiece) {
+      const sideStats = quizStats[quiz.victimColor];
+      if (sideStats) {
+        sideStats.recoveredPieces.push(quiz.record.capturedPiece.type);
+      }
+      syncMeshesFromEngineImmediate();
+      updateHUD();
+    }
+  }
+
+  if (!tutorialActive) {
+    persistAutoSaveIfNeeded();
+  }
+
+  if (engine.status === 'checkmate' || engine.status === 'stalemate' || engine.status === 'draw') {
+    refreshLearningAdvice();
+    window.setTimeout(() => showGameOverModal(), 420);
+    return;
+  }
+
+  if (isVsAIMode() && engine.turn !== gameConfig.playerColor) {
+    maybeTriggerAIMove();
+  } else {
+    refreshLearningAdvice();
+  }
+}
+
+btnQuizChangeTheme?.addEventListener('click', () => {
+  if (!pendingCaptureQuiz || pendingCaptureQuiz.answered) return;
+  quizStepQuestionEl?.classList.add('hidden');
+  quizStepThemeEl?.classList.remove('hidden');
+});
+
+btnQuizForfeit?.addEventListener('click', () => {
+  if (!pendingCaptureQuiz) return;
+  const sideStats = quizStats[pendingCaptureQuiz.victimColor];
+  if (sideStats && !pendingCaptureQuiz.answered) {
+    sideStats.skipped += 1;
+  }
+  pendingCaptureQuiz.answered = true;
+  pendingCaptureQuiz.wasCorrect = false;
+  finalizeCaptureQuiz();
+});
+
+btnQuizContinue?.addEventListener('click', () => {
+  finalizeCaptureQuiz();
+});
+
 // --- Modale Fin de Partie ---
+function computePieceListPoints(types) {
+  if (!Array.isArray(types)) return 0;
+  return types.reduce((sum, t) => sum + (PIECE_POINTS[t] || 0), 0);
+}
+
+function renderGameOverQuizSummary() {
+  const grid = document.getElementById('gameover-players-grid');
+  if (!grid) return;
+  grid.replaceChildren();
+
+  const sides = [
+    {
+      color: COLORS.WHITE,
+      name: 'Blancs (Marbre)',
+      captured: engine.capturedByWhite,
+      swatchClass: 'swatch-white',
+    },
+    {
+      color: COLORS.BLACK,
+      name: 'Noirs (Bronze)',
+      captured: engine.capturedByBlack,
+      swatchClass: 'swatch-black',
+    },
+  ];
+
+  for (const side of sides) {
+    const stats = quizStats[side.color] || { asked: 0, correct: 0, wrong: 0, skipped: 0, recoveredPieces: [] };
+    const isAiSide = isVsAIMode() && side.color !== gameConfig.playerColor;
+    const roleTag = isVsAIMode()
+      ? isAiSide
+        ? ' · IA'
+        : ' · Vous'
+      : side.color === COLORS.WHITE
+      ? ' · J1'
+      : ' · J2';
+
+    const capPts = computePieceListPoints(side.captured);
+    const recPts = computePieceListPoints(stats.recoveredPieces);
+    const accuracyPct = stats.asked > 0 ? Math.round((stats.correct / stats.asked) * 100) : null;
+
+    const card = document.createElement('div');
+    card.className = 'gameover-player-card';
+
+    const head = document.createElement('div');
+    head.className = 'gameover-player-head';
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'gameover-player-title';
+    const swatch = document.createElement('span');
+    swatch.className = `material-swatch ${side.swatchClass}`;
+    swatch.setAttribute('aria-hidden', 'true');
+    const nameTxt = document.createElement('span');
+    nameTxt.textContent = `${side.name}${roleTag}`;
+    titleSpan.append(swatch, nameTxt);
+
+    const accBadge = document.createElement('span');
+    accBadge.className = 'gameover-accuracy-badge';
+    accBadge.textContent = isAiSide
+      ? 'IA'
+      : accuracyPct !== null
+      ? `${accuracyPct} % justes`
+      : '— %';
+
+    head.append(titleSpan, accBadge);
+
+    const rowCaptured = document.createElement('div');
+    rowCaptured.className = 'gameover-player-row';
+    const lblCap = document.createElement('span');
+    lblCap.className = 'gameover-player-label';
+    lblCap.textContent = 'Gains en éléments capturés';
+    const valCap = document.createElement('span');
+    valCap.className = 'gameover-player-value';
+    valCap.textContent =
+      side.captured.length > 0
+        ? `${formatCapturedSummary(side.captured)} (+${capPts} pt${capPts > 1 ? 's' : ''})`
+        : 'Aucun élément capturé (0 pt)';
+    rowCaptured.append(lblCap, valCap);
+
+    const rowRecovered = document.createElement('div');
+    rowRecovered.className = 'gameover-player-row';
+    const lblRec = document.createElement('span');
+    lblRec.className = 'gameover-player-label';
+    lblRec.textContent = 'Éléments récupérés (Quiz)';
+    const valRec = document.createElement('span');
+    valRec.className = 'gameover-player-value';
+    if (isAiSide) {
+      valRec.textContent = 'Non concerné (Ordinateur)';
+    } else {
+      valRec.textContent =
+        stats.recoveredPieces.length > 0
+          ? `${formatCapturedSummary(stats.recoveredPieces)} (+${recPts} pt${recPts > 1 ? 's' : ''} sauvé${recPts > 1 ? 's' : ''})`
+          : 'Aucun élément récupéré';
+    }
+    rowRecovered.append(lblRec, valRec);
+
+    const rowQuiz = document.createElement('div');
+    rowQuiz.className = 'gameover-player-row';
+    const lblQuiz = document.createElement('span');
+    lblQuiz.className = 'gameover-player-label';
+    lblQuiz.textContent = 'Bilan des réponses';
+    const valQuiz = document.createElement('span');
+    valQuiz.className = 'gameover-player-value';
+    if (isAiSide) {
+      valQuiz.textContent = 'L’IA ne répond pas aux questions';
+    } else if (stats.asked === 0) {
+      valQuiz.textContent = stats.skipped > 0
+        ? `0 question tentée (${stats.skipped} abandonnée${stats.skipped > 1 ? 's' : ''})`
+        : 'Aucune question posée durant la partie';
+    } else {
+      valQuiz.textContent = `${stats.correct} bonne${stats.correct > 1 ? 's' : ''} réponse${stats.correct > 1 ? 's' : ''} sur ${stats.asked} (${accuracyPct} % de réussite)`;
+    }
+    rowQuiz.append(lblQuiz, valQuiz);
+
+    card.append(head, rowCaptured, rowRecovered, rowQuiz);
+    grid.appendChild(card);
+  }
+}
+
 function showGameOverModal() {
   const kicker = document.getElementById('gameover-kicker');
   const title = document.getElementById('title-gameover');
@@ -2136,6 +2890,8 @@ function showGameOverModal() {
   document.getElementById('gameover-black-lost').textContent = String(
     engine.capturedByWhite.length
   );
+
+  renderGameOverQuizSummary();
 
   if (authToken && isVsAIMode()) {
     const result =
@@ -2167,6 +2923,10 @@ function syncNewGameModalUI() {
   });
   document.querySelectorAll('[data-side]').forEach((btn) => {
     btn.classList.toggle('is-selected', btn.dataset.side === draftConfig.playerColor);
+  });
+  document.querySelectorAll('[data-quiz-mode]').forEach((btn) => {
+    const isOn = btn.dataset.quizMode === 'on';
+    btn.classList.toggle('is-selected', isOn === Boolean(draftConfig.quizEnabled));
   });
 
   const isAi = isVsAIMode(draftConfig.mode);
@@ -2226,15 +2986,27 @@ document.querySelectorAll('[data-side]').forEach((btn) => {
   });
 });
 
+document.querySelectorAll('[data-quiz-mode]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    draftConfig.quizEnabled = btn.dataset.quizMode === 'on';
+    syncNewGameModalUI();
+  });
+});
+
 document.getElementById('btn-start-campaign').addEventListener('click', () => {
   stopInteractiveTutorial();
   gameConfig.mode = draftConfig.mode;
   gameConfig.aiLevel = draftConfig.aiLevel;
   gameConfig.playerColor = draftConfig.playerColor;
+  gameConfig.quizEnabled = draftConfig.quizEnabled !== false;
 
   aiSessionToken++;
   isAiThinking = false;
   pendingPromotion = null;
+  pendingCaptureQuiz = null;
+  closeModal('modal-capture-quiz');
+  beginNewQuizGameSession();
+  quizStats = createEmptyQuizStats();
   selectedSquare = null;
   legalMovesForSelected = [];
   clear3DHintArrow();
@@ -2245,6 +3017,9 @@ document.getElementById('btn-start-campaign').addEventListener('click', () => {
   syncMeshesFromEngineImmediate();
   setCameraPreset('iso', false);
 
+  if (gameConfig.mode === 'learning' && isSmartphoneViewport()) {
+    enterMobileLearningMode();
+  }
   setLearningEnabled(gameConfig.mode === 'learning');
   updateHUD();
   closeModal('modal-new-game');
@@ -2475,7 +3250,19 @@ let currentUser = null;
 let authModalMode = 'login'; // 'login' | 'register'
 let authSubview = 'forms'; // 'forms' | 'forgot' | 'reset' | 'profile'
 let pendingResetToken = null;
-let serverSmtpConfigured = true;
+let serverSmtpConfigured = false;
+
+async function refreshSmtpConfig() {
+  try {
+    const cfg = await apiFetch('/api/auth/config');
+    serverSmtpConfigured = Boolean(cfg?.smtpConfigured);
+  } catch {
+    serverSmtpConfigured = false;
+  }
+  if (authSubview === 'forgot' && forgotSmtpNoteEl) {
+    forgotSmtpNoteEl.classList.toggle('hidden', serverSmtpConfigured);
+  }
+}
 
 const EMAIL_INPUT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -2664,6 +3451,7 @@ document.getElementById('btn-forgot-password')?.addEventListener('click', () => 
     forgotEmailInput.value = authEmailInput.value.trim();
   }
   setAuthSubview('forgot');
+  refreshSmtpConfig();
   window.setTimeout(() => forgotEmailInput?.focus(), 40);
 });
 
@@ -2812,14 +3600,7 @@ document.getElementById('btn-auth-logout')?.addEventListener('click', async () =
   }
 });
 
-apiFetch('/api/auth/config')
-  .then((cfg) => {
-    serverSmtpConfigured = Boolean(cfg?.smtpConfigured);
-    if (authSubview === 'forgot' && forgotSmtpNoteEl) {
-      forgotSmtpNoteEl.classList.toggle('hidden', serverSmtpConfigured);
-    }
-  })
-  .catch(() => {});
+refreshSmtpConfig();
 
 // Détection d'un lien de réinitialisation de mot de passe (?resetToken=...)
 const initialParams = new URLSearchParams(window.location.search);
@@ -2882,6 +3663,8 @@ function buildCurrentGamePayload(customTitle = '') {
     aiLevel: gameConfig.aiLevel,
     playerColor: gameConfig.playerColor,
     learningEnabled: Boolean(learningEnabled),
+    quizEnabled: gameConfig.quizEnabled !== false,
+    quizStats: normalizeQuizStats(quizStats),
     cameraPreset: activeCameraPreset,
     status: engine.status,
     turn: engine.turn,
@@ -3104,6 +3887,9 @@ function applySavedGame(game) {
   aiSessionToken++;
   isAiThinking = false;
   pendingPromotion = null;
+  pendingCaptureQuiz = null;
+  closeModal('modal-capture-quiz');
+  beginNewQuizGameSession();
   selectedSquare = null;
   legalMovesForSelected = [];
   clear3DHintArrow();
@@ -3114,6 +3900,8 @@ function applySavedGame(game) {
     game.mode === 'pvp' || game.mode === 'learning' || game.mode === 'ai' ? game.mode : 'ai';
   gameConfig.aiLevel = [1, 2, 3].includes(Number(game.aiLevel)) ? Number(game.aiLevel) : 2;
   gameConfig.playerColor = game.playerColor === COLORS.BLACK ? COLORS.BLACK : COLORS.WHITE;
+  gameConfig.quizEnabled = game.quizEnabled !== false;
+  quizStats = normalizeQuizStats(game.quizStats);
 
   syncMeshesFromEngineImmediate();
   setLearningEnabled(Boolean(game.learningEnabled));
